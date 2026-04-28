@@ -42,10 +42,10 @@ pub fn scan_files(dir_path: &str) -> Result<Vec<FileEntry>, String> {
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
-    // Build tree: index by path, attach children to parents
+    // Build tree in two passes:
+    // Pass 1: create nodes indexed by path, attach children to parent nodes
     let mut by_path: HashMap<String, usize> = HashMap::new();
     let mut nodes: Vec<FileEntry> = Vec::new();
-    let mut root: Vec<FileEntry> = Vec::new();
 
     for entry in &flat {
         by_path.insert(entry.path.clone(), nodes.len());
@@ -58,12 +58,25 @@ pub fn scan_files(dir_path: &str) -> Result<Vec<FileEntry>, String> {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        let is_root_child = parent == dir_path;
+        if parent != dir_path {
+            if let Some(&parent_idx) = by_path.get(&parent) {
+                nodes[parent_idx].children.push(entry.clone());
+            }
+        }
+    }
 
-        if is_root_child {
-            root.push(entry.clone());
-        } else if let Some(&parent_idx) = by_path.get(&parent) {
-            nodes[parent_idx].children.push(entry.clone());
+    // Pass 2: collect root entries from nodes (now with populated children)
+    let mut root: Vec<FileEntry> = Vec::new();
+    for entry in &flat {
+        let parent = Path::new(&entry.path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        if parent == dir_path {
+            if let Some(&idx) = by_path.get(&entry.path) {
+                root.push(nodes[idx].clone());
+            }
         }
     }
 
