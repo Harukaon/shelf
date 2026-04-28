@@ -165,13 +165,7 @@ class App {
   }
 
   private _onTabAdd() {
-    showTerminalMenu(
-      this.tabAddBtn,
-      (cwd) => this._createBlankTab(cwd),
-      (session, wsPath) => this._openSessionTab(session, wsPath),
-      () => this.ws.getAllSessions(),
-      this.selectedWorkspace,
-    );
+    showTerminalMenu(this.tabAddBtn, (cwd) => this._createBlankTab(cwd), this.selectedWorkspace);
   }
 
   private _createBlankTab(cwd?: string) {

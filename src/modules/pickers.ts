@@ -4,40 +4,9 @@ import { refreshIcons, escapeHtml, formatDate } from "../helpers";
 export function showTerminalMenu(
   addBtn: HTMLElement,
   createBlankTab: (cwd?: string) => void,
-  createSessionTab: (session: Session, wsPath: string) => void,
-  sessionsGetter: () => { session: Session; workspacePath: string }[],
   selectedWorkspace: string | null,
 ) {
-  const menu = document.createElement("div");
-  menu.className = "picker-menu";
-  menu.innerHTML = `
-    <div class="picker-menu-item" data-action="blank">
-      <i data-lucide="plus"></i><span>New Blank Terminal</span>
-    </div>
-    <div class="picker-menu-item" data-action="session">
-      <i data-lucide="message-square"></i><span>Open Session...</span>
-    </div>`;
-
-  const rect = addBtn.getBoundingClientRect();
-  menu.style.cssText = `position:fixed;top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;min-width:180px;z-index:1001;`;
-
-  document.body.appendChild(menu);
-  refreshIcons();
-
-  const backdrop = document.createElement("div");
-  backdrop.className = "picker-backdrop";
-  const close = () => { menu.remove(); backdrop.remove(); };
-
-  menu.querySelector("[data-action='blank']")!.addEventListener("click", () => {
-    close();
-    createBlankTab(selectedWorkspace || undefined);
-  });
-  menu.querySelector("[data-action='session']")!.addEventListener("click", () => {
-    close();
-    showSessionPicker(sessionsGetter(), createSessionTab);
-  });
-  backdrop.addEventListener("click", close);
-  document.body.appendChild(backdrop);
+  createBlankTab(selectedWorkspace || undefined);
 }
 
 export function showSessionPicker(
