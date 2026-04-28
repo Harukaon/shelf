@@ -159,6 +159,8 @@ class App {
   private async loadFileTree(path: string) {
     try {
       const files = await tauriInvoke<FileEntry[]>("list_files", { path });
+      console.log("[Shelf] loadFileTree got", files.length, "root entries");
+      console.log("[Shelf] first entry:", JSON.stringify(files[0] || "none"));
       this.expandedDirs.clear();
       this.lastFileTree = files;
       this.renderFileTree(files);
@@ -430,8 +432,10 @@ class App {
   }
 
   private renderFileTree(files: FileEntry[], indent = 0) {
-    // Initial call clears tree
-    if (indent === 0) this.fileTree.innerHTML = "";
+    if (indent === 0) {
+      console.log("[Shelf] renderFileTree root, files:", files.length, "expandedDirs:", [...this.expandedDirs]);
+      this.fileTree.innerHTML = "";
+    }
 
     if (files.length === 0 && indent === 0) {
       this.fileTree.innerHTML = '<div class="tree-empty">Empty directory</div>';
@@ -446,6 +450,7 @@ class App {
       if (file.is_dir) {
         const isExpanded = this.expandedDirs.has(file.path);
         const hasChildren = file.children.length > 0;
+        console.log(`[Shelf] render dir: ${file.name} expanded=${isExpanded} children=${hasChildren} (${file.children.length})`);
 
         if (hasChildren) {
           item.innerHTML = `<i data-lucide="chevron-right" class="tree-arrow${isExpanded ? " expanded" : ""}"></i>`;
@@ -472,6 +477,7 @@ class App {
       if (file.is_dir && file.children.length > 0) {
         item.style.cursor = "pointer";
         item.addEventListener("click", () => {
+          console.log(`[Shelf] clicked dir: ${file.path}, currently expanded: ${this.expandedDirs.has(file.path)}`);
           if (this.expandedDirs.has(file.path)) {
             this.expandedDirs.delete(file.path);
           } else {
@@ -483,7 +489,6 @@ class App {
 
       this.fileTree.appendChild(item);
 
-      // Render children if expanded
       if (file.is_dir && this.expandedDirs.has(file.path)) {
         this.renderFileTree(file.children, indent + 1);
       }
