@@ -159,6 +159,37 @@ i[data-lucide] {
 .session-item .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .session-item .session-date { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
 
+.session-load-more {
+  padding: 8px 12px 8px 38px; font-size: 11px; color: var(--accent-dim);
+  cursor: pointer; transition: color 0.1s;
+}
+.session-load-more:hover { color: var(--accent); }
+
+/* Start page */
+.start-page { display: flex; align-items: center; justify-content: center; }
+.start-page-content { text-align: center; padding: 40px; color: var(--text-muted); }
+.start-page-content h2 { color: var(--text-primary); font-size: 20px; margin-bottom: 8px; }
+.start-page-content p { font-size: 13px; margin-bottom: 20px; }
+.start-page-icon { font-size: 48px; margin-bottom: 16px; }
+.start-page-hints { text-align: left; font-size: 12px; line-height: 2; }
+.start-page-hints kbd {
+  background: var(--bg-hover); padding: 1px 6px; border-radius: 3px;
+  font-family: inherit; font-size: 11px; border: 1px solid var(--border);
+}
+
+/* + menu */
+.picker-menu {
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: 8px; padding: 4px 0; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.picker-menu-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; cursor: pointer; font-size: 13px;
+  transition: background 0.1s;
+}
+.picker-menu-item:hover { background: var(--bg-hover); }
+.picker-menu-item i { width: 14px; height: 14px; color: var(--text-muted); }
+
 #add-workspace-btn {
   width: 100%; padding: 8px;
   background: transparent; color: var(--text-muted);

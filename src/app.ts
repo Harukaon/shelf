@@ -6,32 +6,29 @@ import { createIcons, Folder, FolderOpen, File, ChevronRight, Plus, X, Circle, C
 import "@xterm/xterm/css/xterm.css";
 
 const ICONS = { Folder, FolderOpen, File, ChevronRight, Plus, X, Circle, CircleDot, MessageSquare, Search };
+const SESSION_PAGE_SIZE = 6;
+const START_TAB_ID = "__start__";
 
-function refreshIcons(el?: HTMLElement) {
-  createIcons({
-    icons: ICONS,
-    attrs: { stroke: "currentColor", width: "14", height: "14", "stroke-width": "1.5" },
-  });
+function refreshIcons() {
+  createIcons({ icons: ICONS, attrs: { stroke: "currentColor", width: "14", height: "14", "stroke-width": "1.5" } });
 }
 
 declare global {
   interface Window {
-    __TAURI__?: {
-      core?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
-    };
+    __TAURI__?: { core?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> } };
   }
 }
 
 function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const tauri = window.__TAURI__;
-  if (!tauri?.core?.invoke) return Promise.reject(new Error("Tauri API not available"));
+  if (!tauri?.core?.invoke) return Promise.reject(new Error("Tauri not available"));
   return tauri.core.invoke<T>(cmd, args);
 }
 
 interface WorkspaceItem { name: string; path: string; session_count: number; }
 interface Session { id: string; cwd: string; display_title: string; custom_title: string | null; ai_title: string | null; first_prompt: string | null; message_count: number; started_at: string; version: string; }
 interface FileEntry { name: string; path: string; is_dir: boolean; children: FileEntry[]; }
-interface TabInfo { id: string; sessionId?: string; title: string; terminal: Terminal; fitAddon: FitAddon; pty?: IPty; containerEl: HTMLDivElement; }
+interface TabInfo { id: string; sessionId?: string; workspacePath?: string; title: string; closable: boolean; terminal: Terminal; fitAddon: FitAddon; pty?: IPty; containerEl: HTMLDivElement; }
 
 class App {
   private tabs = new Map<string, TabInfo>();
@@ -43,6 +40,7 @@ class App {
   private activeSessionIds = new Set<string>();
   private expandedDirs = new Set<string>();
   private lastFileTree: FileEntry[] = [];
+  private sessionPages = new Map<string, number>();
 
   private tabList!: HTMLElement;
   private tabAddBtn!: HTMLElement;
@@ -61,55 +59,90 @@ class App {
 
     this.setupEventListeners();
     this.setupDragDrop();
+    this.createStartTab();
     await this.loadWorkspaces();
-    await this.createEmptyTab();
   }
+
+  // ─── Start Page Tab ───
+
+  private createStartTab() {
+    const container = document.createElement("div");
+    container.className = "terminal-wrapper start-page";
+    container.dataset.tabId = START_TAB_ID;
+    container.style.cssText = "width:100%;height:100%;display:block;";
+    container.innerHTML = `
+      <div class="start-page-content">
+        <div class="start-page-icon">🖥</div>
+        <h2>Shelf</h2>
+        <p>Select a workspace folder and click a session to start.</p>
+        <div class="start-page-hints">
+          <div><kbd>+ Add Workspace</kbd> to add a project folder</div>
+          <div>Click a session to open it in a terminal tab</div>
+          <div>Press <kbd>+</kbd> in tab bar for a blank terminal</div>
+        </div>
+      </div>`;
+    this.terminalContainer.appendChild(container);
+
+    const tab: TabInfo = {
+      id: START_TAB_ID, title: "Home", closable: false,
+      terminal: null as unknown as Terminal,
+      fitAddon: null as unknown as FitAddon,
+      containerEl: container,
+    };
+    this.tabs.set(START_TAB_ID, tab);
+    this.activeTabId = START_TAB_ID;
+    this.renderTabs();
+  }
+
+  private showStartPage() {
+    // Hide all terminal wrappers
+    this.tabs.forEach(t => { t.containerEl.style.display = "none"; });
+    const start = this.tabs.get(START_TAB_ID);
+    if (start) { start.containerEl.style.display = "block"; }
+    this.activeTabId = START_TAB_ID;
+    this.selectedWorkspace = null;
+    this.fileTree.innerHTML = '<div class="tree-empty">Select a workspace</div>';
+    this.renderTabs();
+    this.renderWorkspaces();
+  }
+
+  // ─── Event Listeners ───
 
   private setupEventListeners() {
     this.tabAddBtn.addEventListener("click", () => this.onTabAddClick());
     this.addWorkspaceBtn.addEventListener("click", () => this.promptAddWorkspace());
     window.addEventListener("resize", () => {
-      this.tabs.forEach((tab) => { try { tab.fitAddon.fit(); } catch (_) {} });
+      this.tabs.forEach(tab => { if (tab.fitAddon) try { tab.fitAddon.fit(); } catch (_) {} });
     });
   }
 
   private setupDragDrop() {
-    let dragPath: string | null = null;       // file being "dragged"
-    let dragOverlay: HTMLElement | null = null; // floating label
+    let dragPath: string | null = null;
+    let dragOverlay: HTMLElement | null = null;
 
-    // Mouse-down on file tree item: start "drag"
     document.addEventListener("mousedown", (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       const fileItem = target.closest(".file-item") as HTMLElement | null;
       if (!fileItem) return;
       const path = fileItem.dataset.path;
       if (!path) return;
-
-      // Only start drag on left button
       if (e.button !== 0) return;
-
-      // Prevent text selection
       e.preventDefault();
       dragPath = path;
-      fileItem.style.userSelect = "none";
       document.body.style.cursor = "grabbing";
     });
 
-    // Mouse-move: show floating label + highlight terminal
     document.addEventListener("mousemove", (e: MouseEvent) => {
       if (!dragPath) return;
-
-      // Show floating label
       if (!dragOverlay) {
         dragOverlay = document.createElement("div");
         dragOverlay.className = "drag-floating-label";
-        dragOverlay.textContent = "📄 " + (dragPath.split("/").pop() || dragPath);
+        dragOverlay.textContent = "\u{1F4C4} " + (dragPath.split("/").pop() || dragPath);
         document.body.appendChild(dragOverlay);
       }
       dragOverlay.style.left = `${e.clientX + 14}px`;
       dragOverlay.style.top = `${e.clientY + 14}px`;
 
-      // Highlight terminal if mouse is over it
       const elUnder = document.elementFromPoint(e.clientX, e.clientY);
       const inTerm = elUnder && (
         this.terminalContainer.contains(elUnder) ||
@@ -117,20 +150,15 @@ class App {
         !!elUnder.closest(".xterm") ||
         !!elUnder.closest(".xterm-screen")
       );
-      if (inTerm) {
-        this.terminalContainer.classList.add("drag-target");
-      } else {
-        this.terminalContainer.classList.remove("drag-target");
-      }
+      if (inTerm) this.terminalContainer.classList.add("drag-target");
+      else this.terminalContainer.classList.remove("drag-target");
     });
 
-    // Mouse-up: if over terminal, write path
     document.addEventListener("mouseup", (e: MouseEvent) => {
       const path = dragPath;
       dragPath = null;
       this.terminalContainer.classList.remove("drag-target");
       document.body.style.cursor = "";
-      document.body.style.userSelect = "";
       if (dragOverlay) { dragOverlay.remove(); dragOverlay = null; }
       if (!path) return;
 
@@ -141,12 +169,9 @@ class App {
         !!elUnder.closest(".xterm") ||
         !!elUnder.closest(".xterm-screen")
       );
-
-      if (inTerm && this.activeTabId) {
+      if (inTerm && this.activeTabId && this.activeTabId !== START_TAB_ID) {
         const tab = this.tabs.get(this.activeTabId);
-        if (tab?.pty) {
-          tab.pty.write(`"${path}" `);
-        }
+        if (tab?.pty) tab.pty.write(`"${path}" `);
       }
     });
 
@@ -193,7 +218,7 @@ class App {
       const ws = await tauriInvoke<WorkspaceItem>("add_workspace", { path });
       this.workspaces.push(ws);
       this.renderWorkspaces();
-    } catch (e) { console.error("Add workspace:", e); alert(`Failed: ${e}`); }
+    } catch (e) { console.error("Add workspace:", e); }
   }
 
   private async removeWorkspace(path: string) {
@@ -202,10 +227,8 @@ class App {
       this.workspaces = this.workspaces.filter(w => w.path !== path);
       this.sessions.delete(path);
       this.expandedWorkspaces.delete(path);
-      if (this.selectedWorkspace === path) {
-        this.selectedWorkspace = null;
-        this.fileTree.innerHTML = '<div class="tree-empty">No workspace selected</div>';
-      }
+      this.sessionPages.delete(path);
+      if (this.selectedWorkspace === path) this.showStartPage();
       this.renderWorkspaces();
     } catch (e) { console.error("Remove workspace:", e); }
   }
@@ -215,6 +238,15 @@ class App {
     this.expandedWorkspaces.add(path);
     if (!this.sessions.has(path)) await this.scanSessions(path);
     await this.loadFileTree(path);
+    // Switch to start page when just browsing workspaces (not opening a session)
+    if (this.activeTabId !== START_TAB_ID) {
+      const activeTab = this.tabs.get(this.activeTabId!);
+      // Only stay on session tab if it belongs to this workspace
+      if (activeTab?.workspacePath !== path) {
+        this.showStartPage();
+        this.selectedWorkspace = path; // restore after showStartPage resets it
+      }
+    }
     this.renderWorkspaces();
   }
 
@@ -231,8 +263,6 @@ class App {
   private async loadFileTree(path: string) {
     try {
       const files = await tauriInvoke<FileEntry[]>("list_files", { path });
-      console.log("[Shelf] loadFileTree got", files.length, "root entries");
-      console.log("[Shelf] first entry:", JSON.stringify(files[0] || "none"));
       this.expandedDirs.clear();
       this.lastFileTree = files;
       this.renderFileTree(files);
@@ -242,40 +272,39 @@ class App {
     }
   }
 
-  // ─── Tab management ───
+  // ─── Tab Management ───
 
-  private async createEmptyTab(): Promise<string> {
+  private createBlankTab(cwd?: string): string {
     const tabId = crypto.randomUUID();
-    const tab = this.createTerminalTab(tabId, "Terminal");
+    const w = cwd ? this.workspaces.find(w => w.path === cwd || cwd.startsWith(w.path)) : undefined;
+    const tab = this.createTerminalTab(tabId, "Terminal", undefined, cwd, w?.path);
     this.tabs.set(tabId, tab);
     this.activateTab(tabId);
     return tabId;
   }
 
-  private async createSessionTab(session: Session, workspacePath: string): Promise<string> {
+  private createSessionTab(session: Session, workspacePath: string): string {
     for (const [id, tab] of this.tabs) {
       if (tab.sessionId === session.id) { this.activateTab(id); return id; }
     }
     const tabId = crypto.randomUUID();
     const cwd = session.cwd || workspacePath;
-    const tab = this.createTerminalTab(tabId, session.display_title, session.id, cwd);
+    const tab = this.createTerminalTab(tabId, session.display_title, session.id, cwd, workspacePath);
     this.tabs.set(tabId, tab);
     this.activateTab(tabId);
-    setTimeout(() => { this.writeToTab(tabId, `claude --resume ${session.id}\n`); }, 600);
+    setTimeout(() => this.writeToTab(tabId, `claude --resume ${session.id}\n`), 600);
     this.activeSessionIds.add(session.id);
     return tabId;
   }
 
   private getShell(): string {
     const plat = navigator.platform?.toLowerCase() || "";
-    if (plat.includes("win")) return "powershell.exe";
-    return "zsh";
+    return plat.includes("win") ? "powershell.exe" : "zsh";
   }
 
-  private createTerminalTab(tabId: string, title: string, sessionId?: string, cwd?: string): TabInfo {
+  private createTerminalTab(tabId: string, title: string, sessionId?: string, cwd?: string, workspacePath?: string): TabInfo {
     const terminal = new Terminal({
-      cursorBlink: true,
-      fontSize: 13,
+      cursorBlink: true, fontSize: 13,
       fontFamily: '"SF Mono", "Fira Code", "JetBrains Mono", "Menlo", monospace',
       theme: {
         background: "#1e1e2e", foreground: "#cdd6f4", cursor: "#f5e0dc",
@@ -296,9 +325,9 @@ class App {
       const spawnOpts: Record<string, unknown> = { cols: terminal.cols, rows: terminal.rows };
       if (cwd) spawnOpts.cwd = cwd;
       pty = spawn(this.getShell(), [], spawnOpts);
-      pty.onData((data: Uint8Array) => { terminal.write(data); });
-      terminal.onData((data: string) => { this.writeToPty(tabId, data); });
-      pty.onExit(() => { terminal.write("\r\n[Process exited]\r\n"); });
+      pty.onData((data: Uint8Array) => terminal.write(data));
+      terminal.onData((data: string) => this.writeToPty(tabId, data));
+      pty.onExit(() => terminal.write("\r\n[Process exited]\r\n"));
     } catch (e) {
       console.error("Spawn PTY:", e);
       terminal.write(`\r\n[Failed to start shell: ${e}]\r\n`);
@@ -311,25 +340,22 @@ class App {
     terminal.open(wrapper);
     this.terminalContainer.appendChild(wrapper);
 
-    const isFirst = !this.activeTabId;
-    if (isFirst) { wrapper.style.display = "block"; fitAddon.fit(); }
-
     terminal.onResize(({ cols, rows }) => {
-      const tab = this.tabs.get(tabId);
-      if (tab?.pty) { try { tab.pty.resize(cols, rows); } catch (_) {} }
+      const t = this.tabs.get(tabId);
+      if (t?.pty) try { t.pty.resize(cols, rows); } catch (_) {}
     });
 
-    return { id: tabId, sessionId, title, terminal, fitAddon, pty, containerEl: wrapper };
+    return { id: tabId, sessionId, workspacePath, title, closable: true, terminal, fitAddon, pty, containerEl: wrapper };
   }
 
   private writeToPty(tabId: string, data: string) {
     const tab = this.tabs.get(tabId);
-    if (tab?.pty) { try { tab.pty.write(data); } catch (_) {} }
+    if (tab?.pty) try { tab.pty.write(data); } catch (_) {}
   }
 
   private writeToTab(tabId: string, data: string) {
     const tab = this.tabs.get(tabId);
-    if (tab?.pty) { try { tab.pty.write(data); } catch (_) {} }
+    if (tab?.pty) try { tab.pty.write(data); } catch (_) {}
   }
 
   private activateTab(tabId: string) {
@@ -338,8 +364,15 @@ class App {
     const tab = this.tabs.get(tabId);
     if (tab) {
       tab.containerEl.style.display = "block";
-      tab.fitAddon.fit();
-      tab.terminal.focus();
+      if (tab.fitAddon) { try { tab.fitAddon.fit(); tab.terminal.focus(); } catch (_) {} }
+      // Sync workspace: if tab belongs to a workspace, select it
+      if (tab.workspacePath) {
+        this.selectedWorkspace = tab.workspacePath;
+        this.expandedWorkspaces.add(tab.workspacePath);
+        if (this.lastFileTree.length === 0 || this.selectedWorkspace !== tab.workspacePath) {
+          this.loadFileTree(tab.workspacePath);
+        }
+      }
     }
     this.activeTabId = tabId;
     this.renderTabs();
@@ -348,33 +381,66 @@ class App {
 
   private closeTab(tabId: string) {
     const tab = this.tabs.get(tabId);
-    if (!tab) return;
-    if (tab.pty) { try { tab.pty.kill(); } catch (_) {} }
-    tab.terminal.dispose();
+    if (!tab || !tab.closable) return;
+    if (tab.pty) try { tab.pty.kill(); } catch (_) {}
+    if (tab.terminal) tab.terminal.dispose();
     tab.containerEl.remove();
     if (tab.sessionId) this.activeSessionIds.delete(tab.sessionId);
     this.tabs.delete(tabId);
     if (this.activeTabId === tabId) {
-      const remaining = Array.from(this.tabs.keys());
+      const remaining = Array.from(this.tabs.keys()).filter(id => id !== START_TAB_ID);
       if (remaining.length > 0) {
         this.activateTab(remaining[remaining.length - 1]);
       } else {
-        this.activeTabId = null;
-        this.terminalContainer.innerHTML = '<div class="terminal-placeholder">Click a session or + to open a terminal</div>';
+        this.showStartPage();
       }
     }
     this.renderTabs();
     this.renderWorkspaces();
   }
 
-  private onTabAddClick() { this.showSessionPicker(); }
+  private onTabAddClick() {
+    this.showTerminalMenu();
+  }
+
+  private showTerminalMenu() {
+    const menu = document.createElement("div");
+    menu.className = "picker-menu";
+    menu.innerHTML = `
+      <div class="picker-menu-item" data-action="blank">
+        <i data-lucide="plus"></i><span>New Blank Terminal</span>
+      </div>
+      <div class="picker-menu-item" data-action="session">
+        <i data-lucide="message-square"></i><span>Open Session...</span>
+      </div>`;
+
+    const rect = this.tabAddBtn.getBoundingClientRect();
+    menu.style.cssText = `position:fixed;top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;min-width:180px;z-index:1001;`;
+
+    document.body.appendChild(menu);
+    refreshIcons();
+
+    menu.querySelector('[data-action="blank"]')!.addEventListener("click", () => {
+      menu.remove(); backdrop.remove();
+      this.createBlankTab(this.selectedWorkspace || undefined);
+    });
+    menu.querySelector('[data-action="session"]')!.addEventListener("click", () => {
+      menu.remove(); backdrop.remove();
+      this.showSessionPicker();
+    });
+
+    const backdrop = document.createElement("div");
+    backdrop.className = "picker-backdrop";
+    backdrop.addEventListener("click", () => { menu.remove(); backdrop.remove(); });
+    document.body.appendChild(backdrop);
+  }
 
   private showSessionPicker() {
     const allSessions: { session: Session; workspacePath: string }[] = [];
     for (const [wsPath, sessions] of this.sessions) {
       for (const s of sessions) allSessions.push({ session: s, workspacePath: wsPath });
     }
-    if (allSessions.length === 0) { this.createEmptyTab(); return; }
+    if (allSessions.length === 0) { this.createBlankTab(); return; }
 
     const picker = document.createElement("div");
     picker.className = "session-picker";
@@ -397,7 +463,10 @@ class App {
         const item = document.createElement("div");
         item.className = "picker-item";
         item.innerHTML = `<i data-lucide="message-square"></i><span class="picker-title">${escapeHtml(session.display_title)}</span><span class="picker-date">${formatDate(session.started_at)}</span>`;
-        item.addEventListener("click", () => { this.createSessionTab(session, workspacePath); picker.remove(); });
+        item.addEventListener("click", () => {
+          picker.remove(); backdrop.remove();
+          this.createSessionTab(session, workspacePath);
+        });
         list.appendChild(item);
       }
       refreshIcons();
@@ -422,36 +491,18 @@ class App {
       wsDiv.className = "workspace-item";
       const isSelected = this.selectedWorkspace === ws.path;
       const isExpanded = this.expandedWorkspaces.has(ws.path);
-      const wsSessions = this.sessions.get(ws.path) || [];
+      const allSessions = this.sessions.get(ws.path) || [];
+      const page = this.sessionPages.get(ws.path) || 1;
+      const pageEnd = page * SESSION_PAGE_SIZE;
 
       const header = document.createElement("div");
       header.className = `workspace-header${isSelected ? " selected" : ""}`;
-
-      const arrow = document.createElement("i");
-      arrow.setAttribute("data-lucide", "chevron-right");
-      arrow.className = `ws-arrow${isExpanded ? " expanded" : ""}`;
-
-      const icon = document.createElement("i");
-      icon.setAttribute("data-lucide", isExpanded ? "folder-open" : "folder");
-
-      const name = document.createElement("span");
-      name.className = "ws-name";
-      name.textContent = ws.name;
-
-      const actions = document.createElement("span");
-      actions.className = "ws-actions";
-      const removeBtn = document.createElement("button");
-      removeBtn.className = "ws-remove-btn";
-      removeBtn.innerHTML = '<i data-lucide="x"></i>';
-      removeBtn.title = "Remove workspace";
-      removeBtn.addEventListener("click", (e) => { e.stopPropagation(); this.removeWorkspace(ws.path); });
-      actions.appendChild(removeBtn);
-
-      header.appendChild(arrow);
-      header.appendChild(icon);
-      header.appendChild(name);
-      header.appendChild(actions);
-
+      header.innerHTML = `
+        <i data-lucide="chevron-right" class="ws-arrow${isExpanded ? " expanded" : ""}"></i>
+        <i data-lucide="${isExpanded ? "folder-open" : "folder"}"></i>
+        <span class="ws-name">${escapeHtml(ws.name)}</span>
+        <span class="ws-actions"><button class="ws-remove-btn" title="Remove workspace"><i data-lucide="x"></i></button></span>`;
+      header.querySelector(".ws-remove-btn")!.addEventListener("click", (e) => { e.stopPropagation(); this.removeWorkspace(ws.path); });
       header.addEventListener("click", () => {
         if (isExpanded && isSelected) {
           this.expandedWorkspaces.delete(ws.path);
@@ -462,10 +513,11 @@ class App {
       });
       wsDiv.appendChild(header);
 
-      if (isExpanded && wsSessions.length > 0) {
+      if (isExpanded && allSessions.length > 0) {
         const sessionList = document.createElement("div");
         sessionList.className = "workspace-sessions show";
-        for (const session of wsSessions) {
+        const visible = allSessions.slice(0, pageEnd);
+        for (const session of visible) {
           const isActive = this.activeSessionIds.has(session.id);
           const item = document.createElement("div");
           item.className = `session-item${isActive ? " active" : ""}`;
@@ -480,6 +532,19 @@ class App {
           });
           sessionList.appendChild(item);
         }
+        // Show "Load more" if there are more sessions
+        if (pageEnd < allSessions.length) {
+          const remaining = allSessions.length - pageEnd;
+          const moreBtn = document.createElement("div");
+          moreBtn.className = "session-load-more";
+          moreBtn.textContent = `Load ${Math.min(remaining, SESSION_PAGE_SIZE)} more (${remaining} remaining)`;
+          moreBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.sessionPages.set(ws.path, page + 1);
+            this.renderWorkspaces();
+          });
+          sessionList.appendChild(moreBtn);
+        }
         wsDiv.appendChild(sessionList);
       }
       this.workspaceList.appendChild(wsDiv);
@@ -492,11 +557,14 @@ class App {
     for (const tab of this.tabs.values()) {
       const tabEl = document.createElement("div");
       tabEl.className = `tab-item${tab.id === this.activeTabId ? " active" : ""}`;
+      const closeHtml = tab.closable ? `<span class="tab-close" title="Close"><i data-lucide="x"></i></span>` : "";
       tabEl.innerHTML = `
         <i data-lucide="circle" class="tab-dot-icon"></i>
         <span class="tab-title">${escapeHtml(tab.title)}</span>
-        <span class="tab-close" title="Close"><i data-lucide="x"></i></span>`;
-      tabEl.querySelector(".tab-close")!.addEventListener("click", (e) => { e.stopPropagation(); this.closeTab(tab.id); });
+        ${closeHtml}`;
+      if (tab.closable) {
+        tabEl.querySelector(".tab-close")!.addEventListener("click", (e) => { e.stopPropagation(); this.closeTab(tab.id); });
+      }
       tabEl.addEventListener("click", () => this.activateTab(tab.id));
       this.tabList.appendChild(tabEl);
     }
@@ -504,16 +572,11 @@ class App {
   }
 
   private renderFileTree(files: FileEntry[], indent = 0) {
-    if (indent === 0) {
-      console.log("[Shelf] renderFileTree root, files:", files.length, "expandedDirs:", [...this.expandedDirs]);
-      this.fileTree.innerHTML = "";
-    }
-
+    if (indent === 0) { this.fileTree.innerHTML = ""; }
     if (files.length === 0 && indent === 0) {
       this.fileTree.innerHTML = '<div class="tree-empty">Empty directory</div>';
       return;
     }
-
     for (const file of files) {
       const item = document.createElement("div");
       item.className = "file-item";
@@ -522,8 +585,6 @@ class App {
       if (file.is_dir) {
         const isExpanded = this.expandedDirs.has(file.path);
         const hasChildren = file.children.length > 0;
-        console.log(`[Shelf] render dir: ${file.name} expanded=${isExpanded} children=${hasChildren} (${file.children.length})`);
-
         if (hasChildren) {
           item.innerHTML = `<i data-lucide="chevron-right" class="tree-arrow${isExpanded ? " expanded" : ""}"></i>`;
         } else {
@@ -536,16 +597,12 @@ class App {
       } else {
         item.innerHTML = `<span class="tree-arrow-spacer"></span>`;
         const icon = document.createElement("i");
-        icon.setAttribute("data-lucide", "file");
-        icon.className = "tree-icon";
+        icon.setAttribute("data-lucide", "file"); icon.className = "tree-icon";
         item.appendChild(icon);
       }
 
       const name = document.createElement("span");
-      name.className = "tree-name";
-      name.textContent = file.name;
-
-      // Make items draggable to terminal (mouse-based)
+      name.className = "tree-name"; name.textContent = file.name;
       item.dataset.path = file.path;
       item.style.cursor = "grab";
       item.appendChild(name);
@@ -553,35 +610,22 @@ class App {
       if (file.is_dir && file.children.length > 0) {
         item.style.cursor = "pointer";
         item.addEventListener("click", () => {
-          console.log(`[Shelf] clicked dir: ${file.path}, currently expanded: ${this.expandedDirs.has(file.path)}`);
-          if (this.expandedDirs.has(file.path)) {
-            this.expandedDirs.delete(file.path);
-          } else {
-            this.expandedDirs.add(file.path);
-          }
+          if (this.expandedDirs.has(file.path)) this.expandedDirs.delete(file.path);
+          else this.expandedDirs.add(file.path);
           this.renderFileTree(this.lastFileTree, 0);
         });
       }
-
       this.fileTree.appendChild(item);
-
-      if (file.is_dir && this.expandedDirs.has(file.path)) {
-        this.renderFileTree(file.children, indent + 1);
-      }
+      if (file.is_dir && this.expandedDirs.has(file.path)) this.renderFileTree(file.children, indent + 1);
     }
-
     if (indent === 0) refreshIcons();
   }
 }
 
 // ─── Helpers ───
-
 function escapeHtml(str: string): string {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
+  const div = document.createElement("div"); div.textContent = str; return div.innerHTML;
 }
-
 function formatDate(isoStr: string): string {
   try {
     const d = new Date(isoStr);
@@ -592,7 +636,5 @@ function formatDate(isoStr: string): string {
     return d.toLocaleDateString([], { month: "short", day: "numeric" });
   } catch { return ""; }
 }
-
-// Bootstrap
 const app = new App();
 app.init();
