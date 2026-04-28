@@ -77,49 +77,75 @@ class App {
     let dragPath: string | null = null;       // file being "dragged"
     let dragOverlay: HTMLElement | null = null; // floating label
 
-    // Mouse-down on any draggable element
+    // Mouse-down on file tree item: start "drag"
     document.addEventListener("mousedown", (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       const fileItem = target.closest(".file-item") as HTMLElement | null;
       if (!fileItem) return;
       const path = fileItem.dataset.path;
       if (!path) return;
+
+      // Only start drag on left button
+      if (e.button !== 0) return;
+
+      // Prevent text selection
+      e.preventDefault();
       dragPath = path;
-      console.log("[Shelf] drag-start (mouse):", path);
+      fileItem.style.userSelect = "none";
+      document.body.style.cursor = "grabbing";
     });
 
-    // Mouse-move: show floating label when dragging
+    // Mouse-move: show floating label + highlight terminal
     document.addEventListener("mousemove", (e: MouseEvent) => {
       if (!dragPath) return;
+
+      // Show floating label
       if (!dragOverlay) {
         dragOverlay = document.createElement("div");
         dragOverlay.className = "drag-floating-label";
-        const basename = dragPath!.split("/").pop() || dragPath!;
-        dragOverlay.textContent = basename;
+        dragOverlay.textContent = "📄 " + (dragPath.split("/").pop() || dragPath);
         document.body.appendChild(dragOverlay);
       }
       dragOverlay.style.left = `${e.clientX + 14}px`;
       dragOverlay.style.top = `${e.clientY + 14}px`;
+
+      // Highlight terminal if mouse is over it
+      const elUnder = document.elementFromPoint(e.clientX, e.clientY);
+      const inTerm = elUnder && (
+        this.terminalContainer.contains(elUnder) ||
+        !!elUnder.closest(".terminal-wrapper") ||
+        !!elUnder.closest(".xterm") ||
+        !!elUnder.closest(".xterm-screen")
+      );
+      if (inTerm) {
+        this.terminalContainer.classList.add("drag-target");
+      } else {
+        this.terminalContainer.classList.remove("drag-target");
+      }
     });
 
-    // Mouse-up: if over terminal area, write path to PTY
+    // Mouse-up: if over terminal, write path
     document.addEventListener("mouseup", (e: MouseEvent) => {
       const path = dragPath;
       dragPath = null;
+      this.terminalContainer.classList.remove("drag-target");
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
       if (dragOverlay) { dragOverlay.remove(); dragOverlay = null; }
       if (!path) return;
 
-      const target = e.target as HTMLElement;
-      const inTerm = this.terminalContainer.contains(target) || 
-                     target.closest(".terminal-wrapper") != null ||
-                     target.closest(".xterm") != null ||
-                     target.closest(".xterm-screen") != null;
-      
+      const elUnder = document.elementFromPoint(e.clientX, e.clientY);
+      const inTerm = elUnder && (
+        this.terminalContainer.contains(elUnder) ||
+        !!elUnder.closest(".terminal-wrapper") ||
+        !!elUnder.closest(".xterm") ||
+        !!elUnder.closest(".xterm-screen")
+      );
+
       if (inTerm && this.activeTabId) {
         const tab = this.tabs.get(this.activeTabId);
         if (tab?.pty) {
           tab.pty.write(`"${path}" `);
-          console.log("[Shelf] drop (mouse): wrote to terminal:", path);
         }
       }
     });

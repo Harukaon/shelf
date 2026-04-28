@@ -114,6 +114,8 @@ i[data-lucide] {
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
   overflow: hidden; flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 #workspace-list { flex: 1; overflow-y: auto; padding: 8px 0; }
@@ -203,6 +205,8 @@ i[data-lucide] {
   display: flex; align-items: center; gap: 4px;
   padding: 2px 8px; font-size: 12px;
   color: var(--text-secondary); cursor: default; user-select: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .file-item:hover { background: var(--bg-hover); }
 .file-item .tree-arrow { width: 12px; height: 12px; color: var(--text-muted); flex-shrink: 0; transition: transform 0.15s; }
@@ -269,15 +273,33 @@ i[data-lucide] {
   outline-offset: -2px;
 }
 
+#terminal-container.drag-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: rgba(137, 180, 250, 0.06);
+}
+
+#file-tree.drag-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .drag-floating-label {
   position: fixed;
   z-index: 9999;
   background: var(--accent);
   color: var(--bg-primary);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 5px;
+  font-size: 12px;
   font-family: inherit;
   pointer-events: none;
   white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+/* Prevent text selection inside file tree */
+#file-tree {
+  user-select: none;
+  -webkit-user-select: none;
 }
