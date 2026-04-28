@@ -1,0 +1,36 @@
+export interface WorkspaceItem {
+  name: string;
+  path: string;
+  session_count: number;
+}
+
+export interface Session {
+  id: string;
+  cwd: string;
+  display_title: string;
+  custom_title: string | null;
+  ai_title: string | null;
+  first_prompt: string | null;
+  message_count: number;
+  started_at: string;
+  version: string;
+}
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  children: FileEntry[];
+}
+
+export interface TabInfo {
+  id: string;
+  sessionId?: string;
+  workspacePath?: string;
+  title: string;
+  closable: boolean;
+  terminal: import("@xterm/xterm").Terminal;
+  fitAddon: import("@xterm/addon-fit").FitAddon;
+  pty?: import("tauri-pty").IPty;
+  containerEl: HTMLDivElement;
+}

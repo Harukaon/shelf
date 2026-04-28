@@ -13,7 +13,7 @@ pub fn scan_files(dir_path: &str) -> Result<Vec<FileEntry>, String> {
     let mut flat: Vec<FileEntry> = Vec::new();
 
     for entry in WalkDir::new(dir_path)
-        .max_depth(4)
+        .max_depth(6)
         .into_iter()
         .filter_map(|e| e.ok())
     {
