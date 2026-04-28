@@ -42,6 +42,7 @@ class App {
   private expandedWorkspaces = new Set<string>();
   private activeSessionIds = new Set<string>();
   private expandedDirs = new Set<string>();
+  private lastFileTree: FileEntry[] = [];
 
   private tabList!: HTMLElement;
   private tabAddBtn!: HTMLElement;
@@ -159,6 +160,7 @@ class App {
     try {
       const files = await tauriInvoke<FileEntry[]>("list_files", { path });
       this.expandedDirs.clear();
+      this.lastFileTree = files;
       this.renderFileTree(files);
     } catch (e) {
       console.error("List files:", e);
@@ -475,7 +477,7 @@ class App {
           } else {
             this.expandedDirs.add(file.path);
           }
-          this.renderFileTree(files, indent);
+          this.renderFileTree(this.lastFileTree, 0);
         });
       }
 
