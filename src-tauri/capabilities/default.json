@@ -1,0 +1,11 @@
+{
+  "identifier": "default",
+  "description": "Default capability for Shelf",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "pty:default",
+    "dialog:default"
+  ]
+}
