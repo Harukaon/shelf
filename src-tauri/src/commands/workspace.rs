@@ -16,11 +16,13 @@ fn load_config() -> ShelfConfig {
         serde_json::from_str(&content).unwrap_or(ShelfConfig {
             workspaces: Vec::new(),
             shell: "zsh".to_string(),
+            ext_term: None,
         })
     } else {
         ShelfConfig {
             workspaces: Vec::new(),
             shell: "zsh".to_string(),
+            ext_term: None,
         }
     }
 }
@@ -88,9 +90,10 @@ pub fn list_workspaces() -> Result<Vec<serde_json::Value>, String> {
 #[tauri::command]
 pub fn get_settings() -> Result<serde_json::Value, String> {
     let config = load_config();
-    Ok(serde_json::json!({
-        "shell": config.shell,
-    }))
+        Ok(serde_json::json!({
+            "shell": config.shell,
+            "extTerm": config.ext_term.unwrap_or_default(),
+        }))
 }
 
 #[tauri::command]
@@ -104,6 +107,9 @@ pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
     };
     if let Some(shell) = payload.get("shell").and_then(|s| s.as_str()) {
         config.shell = shell.to_string();
+    }
+    if let Some(ext) = payload.get("extTerm").and_then(|s| s.as_str()) {
+        config.ext_term = if ext.is_empty() { None } else { Some(ext.to_string()) };
     }
     save_config(&config)
 }

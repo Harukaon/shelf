@@ -22,6 +22,8 @@
   --status-height: 28px;
   --tab-bg: #181825;
   --tab-active-bg: #1e1e2e;
+  --left-panel-width: 260px;
+  --right-panel-width: 260px;
 }
 
 html, body, #app {
@@ -120,13 +122,12 @@ i[data-lucide] {
 
 /* ─── Left Panel ─── */
 #left-panel {
-  width: 260px; min-width: 200px;
+  width: var(--left-panel-width); min-width: 160px;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
   overflow: hidden; flex-shrink: 0;
-  user-select: none;
-  -webkit-user-select: none;
+  user-select: none; -webkit-user-select: none;
 }
 
 #workspace-list { flex: 1; overflow-y: auto; padding: 8px 0; }
@@ -277,10 +278,22 @@ i[data-lucide] {
 
 /* ─── Right Panel (File Tree) ─── */
 #right-panel {
-  width: 260px; min-width: 200px;
+  width: var(--right-panel-width); min-width: 160px;
   background: var(--bg-secondary);
   border-left: 1px solid var(--border);
   flex-shrink: 0; overflow: hidden;
+}
+
+/* Resize handles */
+#resize-handle-left, #resize-handle-right {
+  width: 4px; min-width: 4px;
+  background: transparent; cursor: col-resize;
+  flex-shrink: 0; transition: background 0.15s;
+  z-index: 5;
+}
+#resize-handle-left:hover, #resize-handle-right:hover,
+#resize-handle-left.active, #resize-handle-right.active {
+  background: var(--accent);
 }
 
 #file-tree { padding: 6px 0; overflow-y: auto; height: 100%; }

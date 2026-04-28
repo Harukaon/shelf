@@ -107,3 +107,47 @@ export function setupDragDrop(
     }
   });
 }
+
+// Panel resize: drag handles between panels
+export function setupPanelResize(
+  leftHandle: HTMLElement,
+  rightHandle: HTMLElement,
+  root: HTMLElement,
+) {
+  let dragging: HTMLElement | null = null;
+  let startX = 0;
+  let startWidth = 0;
+
+  [leftHandle, rightHandle].forEach((h) => {
+    h.addEventListener("mousedown", (e: MouseEvent) => {
+      e.preventDefault();
+      dragging = h;
+      startX = e.clientX;
+      const prop = h === leftHandle ? "--left-panel-width" : "--right-panel-width";
+      const style = getComputedStyle(root);
+      startWidth = parseInt(style.getPropertyValue(prop));
+      h.classList.add("active");
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    });
+  });
+
+  document.addEventListener("mousemove", (e: MouseEvent) => {
+    if (!dragging) return;
+    const diff = e.clientX - startX;
+    const prop = dragging === leftHandle ? "--left-panel-width" : "--right-panel-width";
+    const newWidth = Math.max(160, startWidth + (dragging === leftHandle ? diff : -diff));
+    root.style.setProperty(prop, `${newWidth}px`);
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (dragging) {
+      dragging.classList.remove("active");
+      dragging = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      // Trigger terminal resize
+      window.dispatchEvent(new Event("resize"));
+    }
+  });
+}

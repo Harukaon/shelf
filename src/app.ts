@@ -7,7 +7,7 @@ import { TabManager } from "./modules/tabs";
 import { WorkspaceManager } from "./modules/workspace";
 import { createTerminalTab, writeToPty } from "./modules/terminal";
 import { renderFileTree, clearFileCache } from "./modules/files";
-import { setupDragDrop } from "./modules/dragdrop";
+import { setupDragDrop, setupPanelResize } from "./modules/dragdrop";
 import { showTerminalMenu } from "./modules/pickers";
 
 const START_TAB_ID = "__start__";
@@ -19,6 +19,7 @@ class App {
   activeSessionIds = new Set<string>();
   focusedSessionId: string | null = null;
   shellSetting = "zsh";
+  extTermSetting = "";
   expandedDirs = new Set<string>();
   loadedDirs = new Set<string>();
   selectedWorkspace: string | null = null;
@@ -60,6 +61,12 @@ class App {
       this.workspaceList,
       (path) => this._onTerminalDrop(path),
       (path) => this.ws.add(path),
+    );
+
+    setupPanelResize(
+      document.getElementById("resize-handle-left")!,
+      document.getElementById("resize-handle-right")!,
+      document.getElementById("app")!,
     );
 
     window.addEventListener("resize", () => {
@@ -114,6 +121,7 @@ class App {
     try {
       const s = await tauriInvoke<any>("get_settings");
       if (s?.shell) this.shellSetting = s.shell;
+      if (s?.extTerm) this.extTermSetting = s.extTerm;
     } catch (_) { /* use default */ }
   }
 
@@ -152,13 +160,15 @@ class App {
       for (const ext of data.externals || []) {
         const opt = document.createElement("option");
         opt.value = ext.name; opt.textContent = ext.name;
+        if (ext.name === this.extTermSetting) opt.selected = true;
         extSel.appendChild(opt);
       }
     }).catch(() => {});
 
     panel.querySelector("#settings-save")!.addEventListener("click", async () => {
       this.shellSetting = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;
-      try { await tauriInvoke("save_settings", { shell: this.shellSetting }); } catch (_) {}
+      this.extTermSetting = (panel.querySelector("#settings-ext-term") as HTMLSelectElement).value;
+      try { await tauriInvoke("save_settings", { shell: this.shellSetting, extTerm: this.extTermSetting }); } catch (_) {}
       close();
     });
     panel.querySelector("#settings-cancel")!.addEventListener("click", close);
