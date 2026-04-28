@@ -74,23 +74,57 @@ class App {
   }
 
   private setupDragDrop() {
-    // ---- Global: debug ALL drag events ----
-    let dragSeq = 0;
-    const events = ["dragstart", "drag", "dragenter", "dragover", "dragleave", "drop", "dragend"] as const;
-    events.forEach((evt) => {
-      document.addEventListener(evt, (e: Event) => {
-        const de = e as DragEvent;
-        const target = e.target as HTMLElement;
-        const id = target?.id || target?.className?.slice(0, 40) || target?.tagName;
-        const inTerm = this.terminalContainer?.contains(target);
-        dragSeq++;
-        if (["dragover", "drop", "dragenter", "dragleave"].includes(e.type)) {
-          console.log(`[Shelf] #${dragSeq} ${e.type} target=${id} inTerm=${inTerm}`);
-        }
-      }, true);
-    });
-    // ---- End debug ----
+    let dragPath: string | null = null;       // file being "dragged"
+    let dragOverlay: HTMLElement | null = null; // floating label
 
+    // Mouse-down on any draggable element
+    document.addEventListener("mousedown", (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const fileItem = target.closest(".file-item") as HTMLElement | null;
+      if (!fileItem) return;
+      const path = fileItem.dataset.path;
+      if (!path) return;
+      dragPath = path;
+      console.log("[Shelf] drag-start (mouse):", path);
+    });
+
+    // Mouse-move: show floating label when dragging
+    document.addEventListener("mousemove", (e: MouseEvent) => {
+      if (!dragPath) return;
+      if (!dragOverlay) {
+        dragOverlay = document.createElement("div");
+        dragOverlay.className = "drag-floating-label";
+        const basename = dragPath!.split("/").pop() || dragPath!;
+        dragOverlay.textContent = basename;
+        document.body.appendChild(dragOverlay);
+      }
+      dragOverlay.style.left = `${e.clientX + 14}px`;
+      dragOverlay.style.top = `${e.clientY + 14}px`;
+    });
+
+    // Mouse-up: if over terminal area, write path to PTY
+    document.addEventListener("mouseup", (e: MouseEvent) => {
+      const path = dragPath;
+      dragPath = null;
+      if (dragOverlay) { dragOverlay.remove(); dragOverlay = null; }
+      if (!path) return;
+
+      const target = e.target as HTMLElement;
+      const inTerm = this.terminalContainer.contains(target) || 
+                     target.closest(".terminal-wrapper") != null ||
+                     target.closest(".xterm") != null ||
+                     target.closest(".xterm-screen") != null;
+      
+      if (inTerm && this.activeTabId) {
+        const tab = this.tabs.get(this.activeTabId);
+        if (tab?.pty) {
+          tab.pty.write(`"${path}" `);
+          console.log("[Shelf] drop (mouse): wrote to terminal:", path);
+        }
+      }
+    });
+
+    // Workspace: Finder drop
     this.workspaceList.addEventListener("dragover", (e: DragEvent) => {
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
@@ -106,27 +140,6 @@ class App {
         if (file?.path) this.addWorkspace(file.path);
       }
     });
-
-    // Terminal drop: capture phase on container
-    const tel = this.terminalContainer;
-    tel.addEventListener("dragover", (e: DragEvent) => {
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-      tel.classList.add("drag-over");
-    }, true);
-    tel.addEventListener("dragleave", () => tel.classList.remove("drag-over"), true);
-    tel.addEventListener("drop", (e: DragEvent) => {
-      e.preventDefault();
-      tel.classList.remove("drag-over");
-      const path = e.dataTransfer?.getData("text/plain");
-      console.log("[Shelf] drop path:", path);
-      if (path && this.activeTabId) {
-        const tab = this.tabs.get(this.activeTabId);
-        if (tab?.pty) {
-          tab.pty.write(`"${path}" `);
-        }
-      }
-    }, true);
   }
 
   // ─── Workspace ───
@@ -506,13 +519,9 @@ class App {
       name.className = "tree-name";
       name.textContent = file.name;
 
-      // Make items draggable to terminal
-      item.draggable = true;
-      item.addEventListener("dragstart", (e: DragEvent) => {
-        e.dataTransfer?.setData("text/plain", file.path);
-        e.dataTransfer!.effectAllowed = "copy";
-        console.log("[Shelf] dragstart file:", file.path);
-      });
+      // Make items draggable to terminal (mouse-based)
+      item.dataset.path = file.path;
+      item.style.cursor = "grab";
       item.appendChild(name);
 
       if (file.is_dir && file.children.length > 0) {
