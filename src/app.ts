@@ -74,46 +74,23 @@ class App {
   }
 
   private setupDragDrop() {
-    const terminalEl = this.terminalContainer;
-
-    // Capture-phase listeners: intercept before xterm.js eats events
-    document.addEventListener("dragstart", (e: DragEvent) => {
-      console.log("[Shelf] dragstart target:", (e.target as HTMLElement)?.className, "data:", e.dataTransfer?.getData("text/plain"));
-    }, true);
-
-    terminalEl.addEventListener("dragover", (e: DragEvent) => {
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-      console.log("[Shelf] dragover on terminal");
-      terminalEl.classList.add("drag-over");
-    }, true);
-
-    terminalEl.addEventListener("dragleave", (e: DragEvent) => {
-      // Only remove if actually leaving the terminal area
-      if (!terminalEl.contains(e.relatedTarget as Node)) {
-        terminalEl.classList.remove("drag-over");
-      }
-    }, true);
-
-    terminalEl.addEventListener("drop", (e: DragEvent) => {
-      e.preventDefault();
-      terminalEl.classList.remove("drag-over");
-      console.log("[Shelf] drop on terminal");
-
-      // Try custom text data (set by file tree dragstart)
-      const path = e.dataTransfer?.getData("text/plain");
-      console.log("[Shelf] drop path:", path);
-
-      if (path && this.activeTabId) {
-        const tab = this.tabs.get(this.activeTabId);
-        if (tab?.pty) {
-          tab.pty.write(`"${path}" `);
-          console.log("[Shelf] wrote to terminal:", path);
+    // ---- Global: debug ALL drag events ----
+    let dragSeq = 0;
+    const events = ["dragstart", "drag", "dragenter", "dragover", "dragleave", "drop", "dragend"] as const;
+    events.forEach((evt) => {
+      document.addEventListener(evt, (e: Event) => {
+        const de = e as DragEvent;
+        const target = e.target as HTMLElement;
+        const id = target?.id || target?.className?.slice(0, 40) || target?.tagName;
+        const inTerm = this.terminalContainer?.contains(target);
+        dragSeq++;
+        if (["dragover", "drop", "dragenter", "dragleave"].includes(e.type)) {
+          console.log(`[Shelf] #${dragSeq} ${e.type} target=${id} inTerm=${inTerm}`);
         }
-      }
-    }, true);
+      }, true);
+    });
+    // ---- End debug ----
 
-    // Workspace: Finder drop to add workspace
     this.workspaceList.addEventListener("dragover", (e: DragEvent) => {
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
@@ -129,6 +106,27 @@ class App {
         if (file?.path) this.addWorkspace(file.path);
       }
     });
+
+    // Terminal drop: capture phase on container
+    const tel = this.terminalContainer;
+    tel.addEventListener("dragover", (e: DragEvent) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      tel.classList.add("drag-over");
+    }, true);
+    tel.addEventListener("dragleave", () => tel.classList.remove("drag-over"), true);
+    tel.addEventListener("drop", (e: DragEvent) => {
+      e.preventDefault();
+      tel.classList.remove("drag-over");
+      const path = e.dataTransfer?.getData("text/plain");
+      console.log("[Shelf] drop path:", path);
+      if (path && this.activeTabId) {
+        const tab = this.tabs.get(this.activeTabId);
+        if (tab?.pty) {
+          tab.pty.write(`"${path}" `);
+        }
+      }
+    }, true);
   }
 
   // ─── Workspace ───
