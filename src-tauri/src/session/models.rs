@@ -24,8 +24,6 @@ pub struct ShelfConfig {
     pub workspaces: Vec<Workspace>,
     #[serde(default = "default_shell")]
     pub shell: String,
-    #[serde(default)]
-    pub ext_term: Option<String>,
 }
 
 fn default_shell() -> String { "zsh".to_string() }

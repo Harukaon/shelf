@@ -19,7 +19,6 @@ class App {
   activeSessionIds = new Set<string>();
   focusedSessionId: string | null = null;
   shellSetting = "zsh";
-  extTermSetting = "";
   expandedDirs = new Set<string>();
   loadedDirs = new Set<string>();
   selectedWorkspace: string | null = null;
@@ -29,6 +28,7 @@ class App {
   settingsBtn!: HTMLElement;
   workspaceList!: HTMLElement;
   addWorkspaceBtn!: HTMLElement;
+  refreshBtn!: HTMLElement;
   fileTreeEl!: HTMLElement;
   terminalContainer!: HTMLElement;
 
@@ -38,6 +38,7 @@ class App {
     this.settingsBtn = document.getElementById("settings-btn")!;
     this.workspaceList = document.getElementById("workspace-list")!;
     this.addWorkspaceBtn = document.getElementById("add-workspace-btn")!;
+    this.refreshBtn = document.getElementById("refresh-sessions-btn")!;
     this.fileTreeEl = document.getElementById("file-tree")!;
     this.terminalContainer = document.getElementById("terminal-container")!;
 
@@ -54,6 +55,7 @@ class App {
 
     this.tabAddBtn.addEventListener("click", () => this._onTabAdd());
     this.settingsBtn.addEventListener("click", () => this._showSettings());
+    this.refreshBtn.addEventListener("click", () => this._refreshAllSessions());
     this.addWorkspaceBtn.addEventListener("click", () => this.ws.promptAdd());
 
     setupDragDrop(
@@ -121,7 +123,6 @@ class App {
     try {
       const s = await tauriInvoke<any>("get_settings");
       if (s?.shell) this.shellSetting = s.shell;
-      if (s?.extTerm) this.extTermSetting = s.extTerm;
     } catch (_) { /* use default */ }
   }
 
@@ -131,10 +132,6 @@ class App {
     panel.innerHTML = `
       <div class="settings-title">Settings</div>
       <div class="settings-row"><label>Default Shell</label><select id="settings-shell"></select></div>
-      <div class="settings-row"><label>External Terminal</label><select id="settings-ext-term">
-        <option value="">(none)</option>
-      </select></div>
-      <div class="settings-note">External terminal opens a new window via <kbd>Cmd+Shift+T</kbd></div>
       <div class="settings-actions">
         <button id="settings-save">Save</button>
         <button id="settings-cancel">Cancel</button>
@@ -156,19 +153,11 @@ class App {
         if (s === this.shellSetting) opt.selected = true;
         shellSel.appendChild(opt);
       }
-      const extSel = panel.querySelector("#settings-ext-term") as HTMLSelectElement;
-      for (const ext of data.externals || []) {
-        const opt = document.createElement("option");
-        opt.value = ext.name; opt.textContent = ext.name;
-        if (ext.name === this.extTermSetting) opt.selected = true;
-        extSel.appendChild(opt);
-      }
     }).catch(() => {});
 
     panel.querySelector("#settings-save")!.addEventListener("click", async () => {
       this.shellSetting = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;
-      this.extTermSetting = (panel.querySelector("#settings-ext-term") as HTMLSelectElement).value;
-      try { await tauriInvoke("save_settings", { shell: this.shellSetting, extTerm: this.extTermSetting }); } catch (_) {}
+      try { await tauriInvoke("save_settings", { shell: this.shellSetting }); } catch (_) {}
       close();
     });
     panel.querySelector("#settings-cancel")!.addEventListener("click", close);
@@ -176,6 +165,28 @@ class App {
 
   private _onTabAdd() {
     showTerminalMenu(this.tabAddBtn, (cwd) => this._createBlankTab(cwd), this.selectedWorkspace);
+  }
+
+  private _newClaudeSession(wsPath: string) {
+    const tabId = crypto.randomUUID();
+    const tab = createTerminalTab(tabId, "Claude (new)", this.terminalContainer,
+      (id, data) => this._writePty(id, data),
+      { cwd: wsPath, workspacePath: wsPath, shell: this.shellSetting },
+    );
+    this.tabs.addTab(tab);
+    setTimeout(() => writeToPty(tab, `claude\n`), 600);
+  }
+
+  private async _refreshAllSessions() {
+    this.refreshBtn.classList.add("spinning");
+    try {
+      for (const ws of this.ws.workspaces) {
+        await this.ws.scanSessions(ws.path);
+      }
+    } finally {
+      this.refreshBtn.classList.remove("spinning");
+      this._renderWorkspaces();
+    }
   }
 
   private _createBlankTab(cwd?: string) {
@@ -268,9 +279,28 @@ class App {
         <i data-lucide="chevron-right" class="ws-arrow${isExpanded ? " expanded" : ""}"></i>
         <i data-lucide="${isExpanded ? "folder-open" : "folder"}"></i>
         <span class="ws-name">${escapeHtml(ws.name)}</span>
-        <span class="ws-actions"><button class="ws-remove-btn" title="Remove workspace"><i data-lucide="x"></i></button></span>`;
-      header.querySelector(".ws-remove-btn")!.addEventListener("click", (e) => {
-        e.stopPropagation(); this.ws.remove(ws.path); this._showStartPage();
+        <span class="ws-actions">
+          <button class="ws-new-btn" title="New session">+</button>
+          <button class="ws-remove-btn" title="Remove workspace"><i data-lucide="trash-2"></i></button>
+        </span>`;
+      header.querySelector(".ws-new-btn")!.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._newClaudeSession(ws.path);
+      });
+      const removeBtn = header.querySelector(".ws-remove-btn") as HTMLButtonElement;
+      let deletePending = false;
+      removeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (deletePending) {
+          this.ws.remove(ws.path); this._showStartPage();
+        } else {
+          deletePending = true;
+          removeBtn.style.color = "var(--red)";
+          removeBtn.style.opacity = "1";
+          removeBtn.innerHTML = '<i data-lucide="trash-2"></i>';
+          refreshIcons();
+          setTimeout(() => { deletePending = false; removeBtn.style.opacity = "0.5"; }, 3000);
+        }
       });
       header.addEventListener("click", () => {
         if (isExpanded && isSelected) this.ws.expandedWorkspaces.delete(ws.path);
