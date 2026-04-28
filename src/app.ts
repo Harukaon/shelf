@@ -6,7 +6,7 @@ import { Session, FileEntry, TabInfo } from "./types";
 import { TabManager } from "./modules/tabs";
 import { WorkspaceManager } from "./modules/workspace";
 import { createTerminalTab, writeToPty } from "./modules/terminal";
-import { renderFileTree } from "./modules/files";
+import { renderFileTree, clearFileCache } from "./modules/files";
 import { setupDragDrop } from "./modules/dragdrop";
 import { showTerminalMenu } from "./modules/pickers";
 
@@ -18,7 +18,7 @@ class App {
   ws!: WorkspaceManager;
   activeSessionIds = new Set<string>();
   expandedDirs = new Set<string>();
-  lastFileTree: FileEntry[] = [];
+  loadedDirs = new Set<string>();
   selectedWorkspace: string | null = null;
 
   tabList!: HTMLElement;
@@ -175,8 +175,9 @@ class App {
     try {
       const files = await tauriInvoke<FileEntry[]>("list_files", { path });
       this.expandedDirs.clear();
-      this.lastFileTree = files;
-      renderFileTree(this.fileTreeEl, files, this.expandedDirs, this.lastFileTree);
+      this.loadedDirs.clear();
+      clearFileCache();
+      await renderFileTree(this.fileTreeEl, files, this.expandedDirs, this.loadedDirs);
     } catch (e) {
       console.error("List files:", e);
       this.fileTreeEl.innerHTML = '<div class="tree-empty">Failed to load files</div>';

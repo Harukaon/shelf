@@ -1,13 +1,32 @@
 import { FileEntry } from "../types";
-import { refreshIcons } from "../helpers";
+import { tauriInvoke, refreshIcons } from "../helpers";
 
-export function renderFileTree(
+// Cache: path → children (lazy-loaded)
+const childCache = new Map<string, FileEntry[]>();
+
+export function clearFileCache() {
+  childCache.clear();
+}
+
+async function loadChildren(dirPath: string): Promise<FileEntry[]> {
+  if (childCache.has(dirPath)) return childCache.get(dirPath)!;
+  try {
+    const children = await tauriInvoke<FileEntry[]>("list_files", { path: dirPath });
+    childCache.set(dirPath, children);
+    return children;
+  } catch (e) {
+    console.error("Load children failed:", e);
+    return [];
+  }
+}
+
+export async function renderFileTree(
   container: HTMLElement,
   files: FileEntry[],
   expandedDirs: Set<string>,
-  lastFileTree: FileEntry[],
+  loadedDirs: Set<string>,
   indent = 0,
-): void {
+): Promise<void> {
   if (indent === 0) {
     container.innerHTML = "";
   }
@@ -20,10 +39,10 @@ export function renderFileTree(
     const item = document.createElement("div");
     item.className = "file-item";
     item.style.paddingLeft = `${12 + indent * 16}px`;
+    const isExpanded = expandedDirs.has(file.path);
 
     if (file.is_dir) {
-      const isExpanded = expandedDirs.has(file.path);
-      const hasChildren = file.children.length > 0;
+      const hasChildren = file.children.length > 0 || loadedDirs.has(file.path);
       if (hasChildren) {
         item.innerHTML = `<i data-lucide="chevron-right" class="tree-arrow${isExpanded ? " expanded" : ""}"></i>`;
       } else {
@@ -48,22 +67,27 @@ export function renderFileTree(
     item.style.cursor = "grab";
     item.appendChild(name);
 
-    if (file.is_dir && file.children.length > 0) {
+    if (file.is_dir) {
       item.style.cursor = "pointer";
-      item.addEventListener("click", () => {
+      item.addEventListener("click", async () => {
         if (expandedDirs.has(file.path)) {
           expandedDirs.delete(file.path);
         } else {
+          // Lazy load if not yet loaded
+          if (!loadedDirs.has(file.path)) {
+            file.children = await loadChildren(file.path);
+            loadedDirs.add(file.path);
+          }
           expandedDirs.add(file.path);
         }
-        renderFileTree(container, lastFileTree, expandedDirs, lastFileTree, 0);
+        await renderFileTree(container, files, expandedDirs, loadedDirs, indent);
       });
     }
 
     container.appendChild(item);
 
-    if (file.is_dir && expandedDirs.has(file.path)) {
-      renderFileTree(container, file.children, expandedDirs, lastFileTree, indent + 1);
+    if (file.is_dir && isExpanded && file.children.length > 0) {
+      await renderFileTree(container, file.children, expandedDirs, loadedDirs, indent + 1);
     }
   }
 
