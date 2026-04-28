@@ -50,6 +50,7 @@ class App {
   private addWorkspaceBtn!: HTMLElement;
   private fileTree!: HTMLElement;
   private terminalContainer!: HTMLElement;
+  private terminalDropOverlay!: HTMLElement;
 
   async init() {
     this.tabList = document.getElementById("tab-list")!;
@@ -58,6 +59,7 @@ class App {
     this.addWorkspaceBtn = document.getElementById("add-workspace-btn")!;
     this.fileTree = document.getElementById("file-tree")!;
     this.terminalContainer = document.getElementById("terminal-container")!;
+    this.terminalDropOverlay = document.getElementById("terminal-drop-overlay")!;
 
     this.setupEventListeners();
     this.setupDragDrop();
@@ -77,7 +79,7 @@ class App {
     // Only block default on terminal and workspace areas (not whole document)
     const dropTargets: Array<{ el: HTMLElement; handler: (path: string) => void; label: string }> = [
       {
-        el: this.terminalContainer,
+        el: this.terminalDropOverlay,
         label: "terminal",
         handler: (path: string) => {
           if (this.activeTabId) {
