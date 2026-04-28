@@ -1,7 +1,6 @@
 import { FileEntry } from "../types";
 import { tauriInvoke, refreshIcons } from "../helpers";
 
-// Cache: path → children (lazy-loaded)
 const childCache = new Map<string, FileEntry[]>();
 
 export function clearFileCache() {
@@ -20,6 +19,8 @@ async function loadChildren(dirPath: string): Promise<FileEntry[]> {
   }
 }
 
+let rootFiles: FileEntry[] = [];
+
 export async function renderFileTree(
   container: HTMLElement,
   files: FileEntry[],
@@ -28,6 +29,7 @@ export async function renderFileTree(
   indent = 0,
 ): Promise<void> {
   if (indent === 0) {
+    rootFiles = files;
     container.innerHTML = "";
   }
   if (files.length === 0 && indent === 0) {
@@ -42,8 +44,7 @@ export async function renderFileTree(
     const isExpanded = expandedDirs.has(file.path);
 
     if (file.is_dir) {
-      const hasChildren = file.children.length > 0 || loadedDirs.has(file.path);
-      if (hasChildren) {
+      if (file.children.length > 0 || loadedDirs.has(file.path)) {
         item.innerHTML = `<i data-lucide="chevron-right" class="tree-arrow${isExpanded ? " expanded" : ""}"></i>`;
       } else {
         item.innerHTML = '<span class="tree-arrow-spacer"></span>';
@@ -64,23 +65,22 @@ export async function renderFileTree(
     name.className = "tree-name";
     name.textContent = file.name;
     item.dataset.path = file.path;
-    item.style.cursor = "grab";
+    item.style.cursor = file.is_dir ? "pointer" : "grab";
     item.appendChild(name);
 
     if (file.is_dir) {
-      item.style.cursor = "pointer";
       item.addEventListener("click", async () => {
         if (expandedDirs.has(file.path)) {
           expandedDirs.delete(file.path);
         } else {
-          // Lazy load if not yet loaded
           if (!loadedDirs.has(file.path)) {
             file.children = await loadChildren(file.path);
             loadedDirs.add(file.path);
           }
           expandedDirs.add(file.path);
         }
-        await renderFileTree(container, files, expandedDirs, loadedDirs, indent);
+        // Always re-render from root
+        await renderFileTree(container, rootFiles, expandedDirs, loadedDirs, 0);
       });
     }
 
