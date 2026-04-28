@@ -158,7 +158,7 @@ class App {
 
     panel.querySelector("#settings-save")!.addEventListener("click", async () => {
       this.shellSetting = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;
-      try { await tauriInvoke("save_settings", { settings: { shell: this.shellSetting } }); } catch (_) {}
+      try { await tauriInvoke("save_settings", { shell: this.shellSetting }); } catch (_) {}
       close();
     });
     panel.querySelector("#settings-cancel")!.addEventListener("click", close);

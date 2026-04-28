@@ -96,7 +96,13 @@ pub fn get_settings() -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
     let mut config = load_config();
-    if let Some(shell) = settings.get("shell").and_then(|s| s.as_str()) {
+    // Accept both { shell: ".." } and { settings: { shell: ".." } }
+    let payload = if settings.get("settings").is_some() {
+        &settings["settings"]
+    } else {
+        &settings
+    };
+    if let Some(shell) = payload.get("shell").and_then(|s| s.as_str()) {
         config.shell = shell.to_string();
     }
     save_config(&config)
