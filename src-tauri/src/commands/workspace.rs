@@ -88,15 +88,12 @@ pub fn list_workspaces() -> Result<Vec<serde_json::Value>, String> {
 #[tauri::command]
 pub fn get_settings() -> Result<serde_json::Value, String> {
     let config = load_config();
-        Ok(serde_json::json!({
-            "shell": config.shell,
-        }))
+    Ok(serde_json::json!({ "shell": config.shell }))
 }
 
 #[tauri::command]
 pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
     let mut config = load_config();
-    // Accept both { shell: ".." } and { settings: { shell: ".." } }
     let payload = if settings.get("settings").is_some() {
         &settings["settings"]
     } else {
@@ -111,7 +108,6 @@ pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
 #[tauri::command]
 pub fn detect_terminals() -> Result<serde_json::Value, String> {
     let mut shells: Vec<String> = vec![];
-
     for shell_bin in &["zsh", "bash", "fish"] {
         if std::process::Command::new("which")
             .arg(shell_bin)
@@ -122,56 +118,8 @@ pub fn detect_terminals() -> Result<serde_json::Value, String> {
             shells.push(shell_bin.to_string());
         }
     }
-    if shells.is_empty() { shells.push("zsh".to_string()); }
-
+    if shells.is_empty() {
+        shells.push("zsh".to_string());
+    }
     Ok(serde_json::json!({ "shells": shells }))
-}
-    if shells.is_empty() { shells.push("zsh".to_string()); }
-
-    // Detect macOS terminal apps in /Applications and ~/Applications
-    let mut app_dirs = vec![std::path::PathBuf::from("/Applications")];
-    if let Some(home) = dirs::home_dir() { app_dirs.push(home.join("Applications")); }
-
-    let known_terms: Vec<(&str, &str)> = vec![
-        ("Ghostty", "Ghostty.app"),
-        ("iTerm2", "iTerm.app"),
-        ("Terminal", "Terminal.app"),
-        ("Kitty", "kitty.app"),
-        ("Alacritty", "Alacritty.app"),
-        ("Warp", "Warp.app"),
-    ];
-
-    for (name, app_name) in &known_terms {
-        for app_dir in &app_dirs {
-            if app_dir.join(app_name).exists() {
-                externals.push(serde_json::json!({ "name": name, "app": app_name }));
-                break;
-            }
-        }
-    }
-
-    Ok(serde_json::json!({ "shells": shells, "externals": externals }))
-}
-
-#[tauri::command]
-pub fn open_external_terminal(terminal: String, dir_path: String) -> Result<(), String> {
-    if cfg!(target_os = "macos") {
-        // macOS: use `open -a "AppName" dir_path`
-        let app_name = match terminal.as_str() {
-            "Ghostty" => "Ghostty",
-            "iTerm2" => "iTerm",
-            "Terminal" => "Terminal",
-            "Kitty" => "kitty",
-            "Alacritty" => "Alacritty",
-            "Warp" => "Warp",
-            _ => return Err(format!("Unknown terminal: {}", terminal)),
-        };
-        std::process::Command::new("open")
-            .args(["-a", app_name, &dir_path])
-            .spawn()
-            .map_err(|e| format!("Failed to open: {}", e))?;
-        Ok(())
-    } else {
-        Err("External terminal only supported on macOS currently".to_string())
-    }
 }
