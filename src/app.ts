@@ -74,15 +74,7 @@ class App {
   }
 
   private setupDragDrop() {
-    // Global drag logging
-    document.addEventListener("dragover", (e: DragEvent) => {
-      e.preventDefault();
-    });
-    document.addEventListener("drop", (e: DragEvent) => {
-      e.preventDefault();
-      console.log("[Shelf] document drop, target:", (e.target as HTMLElement)?.tagName);
-    });
-
+    // Only block default on terminal and workspace areas (not whole document)
     const dropTargets: Array<{ el: HTMLElement; handler: (path: string) => void; label: string }> = [
       {
         el: this.terminalContainer,
@@ -90,19 +82,10 @@ class App {
         handler: (path: string) => {
           if (this.activeTabId) {
             const tab = this.tabs.get(this.activeTabId);
-            if (tab?.pty) tab.pty.write(`"${path}" `);
-          }
-        },
-      },
-      {
-        el: this.fileTree,
-        label: "fileTree",
-        handler: (path: string) => {
-          console.log("[Shelf] drag: path dropped on file tree:", path);
-          // Write path to active terminal too
-          if (this.activeTabId) {
-            const tab = this.tabs.get(this.activeTabId);
-            if (tab?.pty) tab.pty.write(`"${path}" `);
+            if (tab?.pty) {
+              tab.pty.write(`"${path}" `);
+              console.log("[Shelf] drop: wrote to terminal:", path);
+            }
           }
         },
       },
@@ -110,7 +93,7 @@ class App {
         el: this.workspaceList,
         label: "workspaceList",
         handler: (path: string) => {
-          console.log("[Shelf] drag: adding workspace from drop:", path);
+          console.log("[Shelf] drop: adding workspace:", path);
           this.addWorkspace(path);
         },
       },
@@ -119,20 +102,27 @@ class App {
     dropTargets.forEach(({ el, handler, label }) => {
       el.addEventListener("dragover", (e: DragEvent) => {
         e.preventDefault();
-        e.stopPropagation();
         if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
         el.classList.add("drag-over");
       });
       el.addEventListener("dragleave", () => el.classList.remove("drag-over"));
       el.addEventListener("drop", (e: DragEvent) => {
         e.preventDefault();
-        e.stopPropagation();
         el.classList.remove("drag-over");
         console.log("[Shelf] drop on", label);
+
+        // Try custom data (set by file tree dragstart) first
+        const customPath = e.dataTransfer?.getData("text/plain");
+        if (customPath) {
+          console.log("[Shelf] drop custom path:", customPath);
+          handler(customPath);
+          return;
+        }
+
+        // Fallback: Finder drag files
         const files = e.dataTransfer?.files;
         if (files && files.length > 0) {
           const file = files[0] as unknown as { path?: string };
-          console.log("[Shelf] file:", file?.path || files[0].name);
           if (file?.path) handler(file.path);
         }
       });
@@ -515,6 +505,13 @@ class App {
       const name = document.createElement("span");
       name.className = "tree-name";
       name.textContent = file.name;
+
+      // Make items draggable to terminal
+      item.draggable = true;
+      item.addEventListener("dragstart", (e: DragEvent) => {
+        e.dataTransfer?.setData("text/plain", file.path);
+        e.dataTransfer!.effectAllowed = "copy";
+      });
       item.appendChild(name);
 
       if (file.is_dir && file.children.length > 0) {
