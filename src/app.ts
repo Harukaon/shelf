@@ -17,12 +17,15 @@ class App {
   tabs!: TabManager;
   ws!: WorkspaceManager;
   activeSessionIds = new Set<string>();
+  focusedSessionId: string | null = null;
+  shellSetting = "zsh";
   expandedDirs = new Set<string>();
   loadedDirs = new Set<string>();
   selectedWorkspace: string | null = null;
 
   tabList!: HTMLElement;
   tabAddBtn!: HTMLElement;
+  settingsBtn!: HTMLElement;
   workspaceList!: HTMLElement;
   addWorkspaceBtn!: HTMLElement;
   fileTreeEl!: HTMLElement;
@@ -31,6 +34,7 @@ class App {
   async init() {
     this.tabList = document.getElementById("tab-list")!;
     this.tabAddBtn = document.getElementById("tab-add-btn")!;
+    this.settingsBtn = document.getElementById("settings-btn")!;
     this.workspaceList = document.getElementById("workspace-list")!;
     this.addWorkspaceBtn = document.getElementById("add-workspace-btn")!;
     this.fileTreeEl = document.getElementById("file-tree")!;
@@ -48,6 +52,7 @@ class App {
     );
 
     this.tabAddBtn.addEventListener("click", () => this._onTabAdd());
+    this.settingsBtn.addEventListener("click", () => this._showSettings());
     this.addWorkspaceBtn.addEventListener("click", () => this.ws.promptAdd());
 
     setupDragDrop(
@@ -63,6 +68,7 @@ class App {
       });
     });
 
+    await this._loadSettings();
     this._createStartTab();
     await this.ws.load();
   }
@@ -97,10 +103,48 @@ class App {
   }
 
   private _showStartPage() {
+    this.focusedSessionId = null;
     this.tabs.switchToStartPage(START_TAB_ID);
     this.selectedWorkspace = null;
     this.ws.selectedWorkspace = null;
     this.fileTreeEl.innerHTML = '<div class="tree-empty">Select a workspace</div>';
+  }
+
+  private async _loadSettings() {
+    try {
+      const s = await tauriInvoke<any>("get_settings");
+      if (s?.shell) this.shellSetting = s.shell;
+    } catch (_) { /* use default */ }
+  }
+
+  private _showSettings() {
+    const panel = document.createElement("div");
+    panel.className = "settings-panel";
+    const shells = ["zsh", "bash", "fish"];
+    const opts = shells.map(s =>
+      `<option value="${s}"${this.shellSetting === s ? " selected" : ""}>${s}</option>`).join("");
+    panel.innerHTML = `
+      <div class="settings-title">Settings</div>
+      <div class="settings-row">
+        <label>Default Shell</label>
+        <select id="settings-shell">${opts}</select>
+      </div>
+      <div class="settings-actions">
+        <button id="settings-save">Save</button>
+        <button id="settings-cancel">Cancel</button>
+      </div>`;
+    const backdrop = document.createElement("div");
+    backdrop.className = "picker-backdrop";
+    const close = () => { panel.remove(); backdrop.remove(); };
+    backdrop.addEventListener("click", close);
+    document.body.appendChild(backdrop);
+    document.body.appendChild(panel);
+    panel.querySelector("#settings-save")!.addEventListener("click", async () => {
+      this.shellSetting = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;
+      try { await tauriInvoke("save_settings", { settings: { shell: this.shellSetting } }); } catch (_) {}
+      close();
+    });
+    panel.querySelector("#settings-cancel")!.addEventListener("click", close);
   }
 
   private _onTabAdd() {
@@ -119,7 +163,7 @@ class App {
     if (cwd) wsPath = this.ws.workspaces.find(w => cwd === w.path || cwd.startsWith(w.path + "/"))?.path;
     const tab = createTerminalTab(tabId, "Terminal", this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { cwd, workspacePath: wsPath },
+      { cwd, workspacePath: wsPath, shell: this.shellSetting },
     );
     this.tabs.addTab(tab);
   }
@@ -132,11 +176,12 @@ class App {
     const cwd = session.cwd || wsPath;
     const tab = createTerminalTab(tabId, session.display_title, this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { sessionId: session.id, cwd, workspacePath: wsPath },
+      { sessionId: session.id, cwd, workspacePath: wsPath, shell: this.shellSetting },
     );
     this.tabs.addTab(tab);
     setTimeout(() => writeToPty(tab, `claude --resume ${session.id}\n`), 600);
     this.activeSessionIds.add(session.id);
+    this.focusedSessionId = session.id;
   }
 
   private _writePty(tabId: string, data: string) {
@@ -145,6 +190,7 @@ class App {
   }
 
   private _onActivateTab(tab: TabInfo) {
+    this.focusedSessionId = tab.sessionId || null;
     if (tab.workspacePath) {
       this.selectedWorkspace = tab.workspacePath;
       this.ws.selectedWorkspace = tab.workspacePath;
@@ -217,10 +263,12 @@ class App {
         sessionList.className = "workspace-sessions show";
         for (const session of allSessions.slice(0, pageEnd)) {
           const isActive = this.activeSessionIds.has(session.id);
+          const isFocused = this.focusedSessionId === session.id;
           const item = document.createElement("div");
-          item.className = `session-item${isActive ? " active" : ""}`;
+          item.className = `session-item${isActive ? " active" : ""}${isFocused ? " focused" : ""}`;
+          const iconName = isFocused ? "disc" : isActive ? "circle-dot" : "circle";
           item.innerHTML = `
-            <i data-lucide="${isActive ? "circle-dot" : "circle"}" class="session-icon"></i>
+            <i data-lucide="${iconName}" class="session-icon"></i>
             <span class="session-title" title="${escapeHtml(session.display_title)}">${escapeHtml(session.display_title)}</span>
             <span class="session-date">${formatDate(session.started_at)}</span>`;
           item.addEventListener("click", (e) => {

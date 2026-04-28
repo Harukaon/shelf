@@ -18,6 +18,8 @@ pub fn run() {
             commands::workspace::add_workspace,
             commands::workspace::remove_workspace,
             commands::workspace::list_workspaces,
+            commands::workspace::get_settings,
+            commands::workspace::save_settings,
             commands::sessions::scan_sessions,
             commands::sessions::rename_session,
             commands::files::list_files,

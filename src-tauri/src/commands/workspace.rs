@@ -15,10 +15,12 @@ fn load_config() -> ShelfConfig {
         let content = fs::read_to_string(&path).unwrap_or_default();
         serde_json::from_str(&content).unwrap_or(ShelfConfig {
             workspaces: Vec::new(),
+            shell: "zsh".to_string(),
         })
     } else {
         ShelfConfig {
             workspaces: Vec::new(),
+            shell: "zsh".to_string(),
         }
     }
 }
@@ -81,4 +83,21 @@ pub fn list_workspaces() -> Result<Vec<serde_json::Value>, String> {
         })
         .collect();
     Ok(items)
+}
+
+#[tauri::command]
+pub fn get_settings() -> Result<serde_json::Value, String> {
+    let config = load_config();
+    Ok(serde_json::json!({
+        "shell": config.shell,
+    }))
+}
+
+#[tauri::command]
+pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
+    let mut config = load_config();
+    if let Some(shell) = settings.get("shell").and_then(|s| s.as_str()) {
+        config.shell = shell.to_string();
+    }
+    save_config(&config)
 }

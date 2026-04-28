@@ -22,7 +22,11 @@ pub struct Workspace {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ShelfConfig {
     pub workspaces: Vec<Workspace>,
+    #[serde(default = "default_shell")]
+    pub shell: String,
 }
+
+fn default_shell() -> String { "zsh".to_string() }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileEntry {

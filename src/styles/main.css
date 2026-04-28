@@ -104,6 +104,17 @@ i[data-lucide] {
 }
 #tab-add-btn:hover { color: var(--accent); border-color: var(--accent); }
 
+#settings-btn {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--text-muted);
+  border: 1px solid var(--border); border-radius: 4px;
+  cursor: pointer; margin-left: 4px; flex-shrink: 0;
+  font-size: 13px;
+  transition: color 0.15s, border-color 0.15s;
+}
+#settings-btn:hover { color: var(--accent); border-color: var(--accent); }
+
 /* ─── Main Layout ─── */
 #main-content { display: flex; flex: 1; overflow: hidden; }
 
@@ -154,6 +165,8 @@ i[data-lucide] {
 }
 .session-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .session-item.active { color: var(--accent); }
+.session-item.focused { color: var(--accent); font-weight: 600; }
+.session-item.focused .session-icon { opacity: 1; color: var(--accent); }
 .session-item .session-icon { width: 12px; height: 12px; opacity: 0.7; }
 .session-item.active .session-icon { opacity: 1; }
 .session-item .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
@@ -189,6 +202,30 @@ i[data-lucide] {
 }
 .picker-menu-item:hover { background: var(--bg-hover); }
 .picker-menu-item i { width: 14px; height: 14px; color: var(--text-muted); }
+
+/* Settings panel */
+.settings-panel {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: 10px; padding: 20px; min-width: 300px; z-index: 1001;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+}
+.settings-title { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary); }
+.settings-row { margin-bottom: 16px; display: flex; align-items: center; gap: 12px; }
+.settings-row label { font-size: 13px; color: var(--text-secondary); flex-shrink: 0; }
+.settings-row select {
+  flex: 1; padding: 6px 10px; background: var(--bg-primary); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 13px;
+  outline: none;
+}
+.settings-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.settings-actions button {
+  padding: 6px 16px; border-radius: 4px; font-family: inherit; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--border); transition: background 0.1s;
+}
+.settings-actions #settings-save { background: var(--accent); color: var(--bg-primary); border-color: var(--accent); }
+.settings-actions #settings-cancel { background: transparent; color: var(--text-muted); }
+.settings-actions #settings-cancel:hover { background: var(--bg-hover); }
 
 #add-workspace-btn {
   width: 100%; padding: 8px;

@@ -1,4 +1,4 @@
-import { createIcons, Folder, FolderOpen, File, ChevronRight, Plus, X, Circle, CircleDot, MessageSquare, Search } from "lucide";
+import { createIcons, Folder, FolderOpen, File, ChevronRight, Plus, X, Circle, CircleDot, Disc, MessageSquare, Search } from "lucide";
 
 declare global {
   interface Window {
@@ -6,7 +6,7 @@ declare global {
   }
 }
 
-export const ICONS = { Folder, FolderOpen, File, ChevronRight, Plus, X, Circle, CircleDot, MessageSquare, Search };
+export const ICONS = { Folder, FolderOpen, File, ChevronRight, Plus, X, Circle, CircleDot, Disc, MessageSquare, Search };
 
 export function refreshIcons() {
   createIcons({ icons: ICONS, attrs: { stroke: "currentColor", width: "14", height: "14", "stroke-width": "1.5" } });

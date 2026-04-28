@@ -26,17 +26,12 @@ let TERMINAL_THEME = {
   brightWhite: "#a6adc8",
 };
 
-function getShell(): string {
-  const plat = navigator.platform?.toLowerCase() || "";
-  return plat.includes("win") ? "powershell.exe" : "zsh";
-}
-
 export function createTerminalTab(
   tabId: string,
   title: string,
   terminalContainer: HTMLElement,
   onPtyWrite: (tabId: string, data: string) => void,
-  options?: { sessionId?: string; cwd?: string; workspacePath?: string },
+  options?: { sessionId?: string; cwd?: string; workspacePath?: string; shell?: string },
 ): TabInfo {
   const terminal = new Terminal({
     cursorBlink: true,
@@ -52,7 +47,8 @@ export function createTerminalTab(
   try {
     const spawnOpts: Record<string, unknown> = { cols: terminal.cols, rows: terminal.rows };
     if (options?.cwd) spawnOpts.cwd = options.cwd;
-    pty = spawn(getShell(), [], spawnOpts);
+    const shellBin = options?.shell || "zsh";
+    pty = spawn(shellBin, [], spawnOpts);
     pty.onData((data: Uint8Array) => terminal.write(data));
     terminal.onData((data: string) => onPtyWrite(tabId, data));
     pty.onExit(() => terminal.write("\r\n[Process exited]\r\n"));
