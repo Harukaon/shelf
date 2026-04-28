@@ -66,6 +66,20 @@ pub fn scan_files(dir_path: &str) -> Result<Vec<FileEntry>, String> {
     }
 
     // Pass 2: collect root entries from nodes (now with populated children)
+    // Pass 3: fix nested children - flat clones have empty sub-children,
+    //         replace with populated versions from nodes
+    let mut fixes: Vec<(usize, usize, usize)> = Vec::new();
+    for i in 0..nodes.len() {
+        for j in 0..nodes[i].children.len() {
+            if let Some(&child_idx) = by_path.get(&nodes[i].children[j].path) {
+                fixes.push((i, j, child_idx));
+            }
+        }
+    }
+    for (i, j, child_idx) in fixes {
+        nodes[i].children[j] = nodes[child_idx].clone();
+    }
+
     let mut root: Vec<FileEntry> = Vec::new();
     for entry in &flat {
         let parent = Path::new(&entry.path)
