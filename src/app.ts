@@ -74,21 +74,41 @@ class App {
   }
 
   private setupDragDrop() {
-    const dropTargets: Array<{ el: HTMLElement; handler: (path: string) => void }> = [
+    // Global drag logging
+    document.addEventListener("dragover", (e: DragEvent) => {
+      e.preventDefault();
+    });
+    document.addEventListener("drop", (e: DragEvent) => {
+      e.preventDefault();
+      console.log("[Shelf] document drop, target:", (e.target as HTMLElement)?.tagName);
+    });
+
+    const dropTargets: Array<{ el: HTMLElement; handler: (path: string) => void; label: string }> = [
       {
         el: this.terminalContainer,
+        label: "terminal",
         handler: (path: string) => {
           if (this.activeTabId) {
             const tab = this.tabs.get(this.activeTabId);
-            if (tab?.pty) {
-              tab.pty.write(`"${path}" `);
-              console.log("[Shelf] drag: wrote path to terminal:", path);
-            }
+            if (tab?.pty) tab.pty.write(`"${path}" `);
+          }
+        },
+      },
+      {
+        el: this.fileTree,
+        label: "fileTree",
+        handler: (path: string) => {
+          console.log("[Shelf] drag: path dropped on file tree:", path);
+          // Write path to active terminal too
+          if (this.activeTabId) {
+            const tab = this.tabs.get(this.activeTabId);
+            if (tab?.pty) tab.pty.write(`"${path}" `);
           }
         },
       },
       {
         el: this.workspaceList,
+        label: "workspaceList",
         handler: (path: string) => {
           console.log("[Shelf] drag: adding workspace from drop:", path);
           this.addWorkspace(path);
@@ -96,24 +116,24 @@ class App {
       },
     ];
 
-    dropTargets.forEach(({ el, handler }) => {
+    dropTargets.forEach(({ el, handler, label }) => {
       el.addEventListener("dragover", (e: DragEvent) => {
         e.preventDefault();
+        e.stopPropagation();
         if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
         el.classList.add("drag-over");
       });
-      el.addEventListener("dragleave", () => {
-        el.classList.remove("drag-over");
-      });
+      el.addEventListener("dragleave", () => el.classList.remove("drag-over"));
       el.addEventListener("drop", (e: DragEvent) => {
         e.preventDefault();
+        e.stopPropagation();
         el.classList.remove("drag-over");
-        console.log("[Shelf] drop event on:", (e.currentTarget as HTMLElement)?.id || el.className);
+        console.log("[Shelf] drop on", label);
         const files = e.dataTransfer?.files;
         if (files && files.length > 0) {
-          const path = (files[0] as unknown as { path?: string }).path || "";
-          console.log("[Shelf] drop file path:", path);
-          if (path) handler(path);
+          const file = files[0] as unknown as { path?: string };
+          console.log("[Shelf] file:", file?.path || files[0].name);
+          if (file?.path) handler(file.path);
         }
       });
     });

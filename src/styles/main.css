@@ -263,6 +263,7 @@ i[data-lucide] {
 
 /* ─── Drag & Drop ─── */
 #terminal-container.drag-over,
+#file-tree.drag-over,
 #workspace-list.drag-over {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
