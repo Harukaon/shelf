@@ -50,7 +50,6 @@ class App {
   private addWorkspaceBtn!: HTMLElement;
   private fileTree!: HTMLElement;
   private terminalContainer!: HTMLElement;
-  private terminalDropOverlay!: HTMLElement;
 
   async init() {
     this.tabList = document.getElementById("tab-list")!;
@@ -59,7 +58,6 @@ class App {
     this.addWorkspaceBtn = document.getElementById("add-workspace-btn")!;
     this.fileTree = document.getElementById("file-tree")!;
     this.terminalContainer = document.getElementById("terminal-container")!;
-    this.terminalDropOverlay = document.getElementById("terminal-drop-overlay")!;
 
     this.setupEventListeners();
     this.setupDragDrop();
@@ -76,58 +74,60 @@ class App {
   }
 
   private setupDragDrop() {
-    // Only block default on terminal and workspace areas (not whole document)
-    const dropTargets: Array<{ el: HTMLElement; handler: (path: string) => void; label: string }> = [
-      {
-        el: this.terminalDropOverlay,
-        label: "terminal",
-        handler: (path: string) => {
-          if (this.activeTabId) {
-            const tab = this.tabs.get(this.activeTabId);
-            if (tab?.pty) {
-              tab.pty.write(`"${path}" `);
-              console.log("[Shelf] drop: wrote to terminal:", path);
-            }
-          }
-        },
-      },
-      {
-        el: this.workspaceList,
-        label: "workspaceList",
-        handler: (path: string) => {
-          console.log("[Shelf] drop: adding workspace:", path);
-          this.addWorkspace(path);
-        },
-      },
-    ];
+    const terminalEl = this.terminalContainer;
 
-    dropTargets.forEach(({ el, handler, label }) => {
-      el.addEventListener("dragover", (e: DragEvent) => {
-        e.preventDefault();
-        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-        el.classList.add("drag-over");
-      });
-      el.addEventListener("dragleave", () => el.classList.remove("drag-over"));
-      el.addEventListener("drop", (e: DragEvent) => {
-        e.preventDefault();
-        el.classList.remove("drag-over");
-        console.log("[Shelf] drop on", label);
+    // Capture-phase listeners: intercept before xterm.js eats events
+    document.addEventListener("dragstart", (e: DragEvent) => {
+      console.log("[Shelf] dragstart target:", (e.target as HTMLElement)?.className, "data:", e.dataTransfer?.getData("text/plain"));
+    }, true);
 
-        // Try custom data (set by file tree dragstart) first
-        const customPath = e.dataTransfer?.getData("text/plain");
-        if (customPath) {
-          console.log("[Shelf] drop custom path:", customPath);
-          handler(customPath);
-          return;
+    terminalEl.addEventListener("dragover", (e: DragEvent) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      console.log("[Shelf] dragover on terminal");
+      terminalEl.classList.add("drag-over");
+    }, true);
+
+    terminalEl.addEventListener("dragleave", (e: DragEvent) => {
+      // Only remove if actually leaving the terminal area
+      if (!terminalEl.contains(e.relatedTarget as Node)) {
+        terminalEl.classList.remove("drag-over");
+      }
+    }, true);
+
+    terminalEl.addEventListener("drop", (e: DragEvent) => {
+      e.preventDefault();
+      terminalEl.classList.remove("drag-over");
+      console.log("[Shelf] drop on terminal");
+
+      // Try custom text data (set by file tree dragstart)
+      const path = e.dataTransfer?.getData("text/plain");
+      console.log("[Shelf] drop path:", path);
+
+      if (path && this.activeTabId) {
+        const tab = this.tabs.get(this.activeTabId);
+        if (tab?.pty) {
+          tab.pty.write(`"${path}" `);
+          console.log("[Shelf] wrote to terminal:", path);
         }
+      }
+    }, true);
 
-        // Fallback: Finder drag files
-        const files = e.dataTransfer?.files;
-        if (files && files.length > 0) {
-          const file = files[0] as unknown as { path?: string };
-          if (file?.path) handler(file.path);
-        }
-      });
+    // Workspace: Finder drop to add workspace
+    this.workspaceList.addEventListener("dragover", (e: DragEvent) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      this.workspaceList.classList.add("drag-over");
+    });
+    this.workspaceList.addEventListener("dragleave", () => this.workspaceList.classList.remove("drag-over"));
+    this.workspaceList.addEventListener("drop", (e: DragEvent) => {
+      e.preventDefault();
+      this.workspaceList.classList.remove("drag-over");
+      const files = e.dataTransfer?.files;
+      if (files?.[0]) {
+        const file = files[0] as unknown as { path?: string };
+        if (file?.path) this.addWorkspace(file.path);
+      }
     });
   }
 
@@ -513,6 +513,7 @@ class App {
       item.addEventListener("dragstart", (e: DragEvent) => {
         e.dataTransfer?.setData("text/plain", file.path);
         e.dataTransfer!.effectAllowed = "copy";
+        console.log("[Shelf] dragstart file:", file.path);
       });
       item.appendChild(name);
 
