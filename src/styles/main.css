@@ -226,6 +226,11 @@ i[data-lucide] {
 .settings-actions #settings-save { background: var(--accent); color: var(--bg-primary); border-color: var(--accent); }
 .settings-actions #settings-cancel { background: transparent; color: var(--text-muted); }
 .settings-actions #settings-cancel:hover { background: var(--bg-hover); }
+.settings-note { font-size: 11px; color: var(--text-muted); margin-bottom: 16px; }
+.settings-note kbd {
+  background: var(--bg-hover); padding: 1px 5px; border-radius: 3px;
+  font-size: 10px; border: 1px solid var(--border); font-family: inherit;
+}
 
 #add-workspace-btn {
   width: 100%; padding: 8px;

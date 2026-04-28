@@ -120,15 +120,13 @@ class App {
   private _showSettings() {
     const panel = document.createElement("div");
     panel.className = "settings-panel";
-    const shells = ["zsh", "bash", "fish"];
-    const opts = shells.map(s =>
-      `<option value="${s}"${this.shellSetting === s ? " selected" : ""}>${s}</option>`).join("");
     panel.innerHTML = `
       <div class="settings-title">Settings</div>
-      <div class="settings-row">
-        <label>Default Shell</label>
-        <select id="settings-shell">${opts}</select>
-      </div>
+      <div class="settings-row"><label>Default Shell</label><select id="settings-shell"></select></div>
+      <div class="settings-row"><label>External Terminal</label><select id="settings-ext-term">
+        <option value="">(none)</option>
+      </select></div>
+      <div class="settings-note">External terminal opens a new window via <kbd>Cmd+Shift+T</kbd></div>
       <div class="settings-actions">
         <button id="settings-save">Save</button>
         <button id="settings-cancel">Cancel</button>
@@ -139,6 +137,25 @@ class App {
     backdrop.addEventListener("click", close);
     document.body.appendChild(backdrop);
     document.body.appendChild(panel);
+
+    // Load available terminals from system
+    tauriInvoke<any>("detect_terminals").then((data) => {
+      const shellSel = panel.querySelector("#settings-shell") as HTMLSelectElement;
+      shellSel.innerHTML = "";
+      for (const s of data.shells || ["zsh"]) {
+        const opt = document.createElement("option");
+        opt.value = s; opt.textContent = s;
+        if (s === this.shellSetting) opt.selected = true;
+        shellSel.appendChild(opt);
+      }
+      const extSel = panel.querySelector("#settings-ext-term") as HTMLSelectElement;
+      for (const ext of data.externals || []) {
+        const opt = document.createElement("option");
+        opt.value = ext.name; opt.textContent = ext.name;
+        extSel.appendChild(opt);
+      }
+    }).catch(() => {});
+
     panel.querySelector("#settings-save")!.addEventListener("click", async () => {
       this.shellSetting = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;
       try { await tauriInvoke("save_settings", { settings: { shell: this.shellSetting } }); } catch (_) {}
@@ -266,7 +283,7 @@ class App {
           const isFocused = this.focusedSessionId === session.id;
           const item = document.createElement("div");
           item.className = `session-item${isActive ? " active" : ""}${isFocused ? " focused" : ""}`;
-          const iconName = isFocused ? "disc" : isActive ? "circle-dot" : "circle";
+          const iconName = isFocused ? "disc" : "circle";
           item.innerHTML = `
             <i data-lucide="${iconName}" class="session-icon"></i>
             <span class="session-title" title="${escapeHtml(session.display_title)}">${escapeHtml(session.display_title)}</span>

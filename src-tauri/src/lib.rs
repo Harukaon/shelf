@@ -20,6 +20,7 @@ pub fn run() {
             commands::workspace::list_workspaces,
             commands::workspace::get_settings,
             commands::workspace::save_settings,
+            commands::workspace::detect_terminals,
             commands::sessions::scan_sessions,
             commands::sessions::rename_session,
             commands::files::list_files,

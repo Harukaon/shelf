@@ -101,3 +101,46 @@ pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
     }
     save_config(&config)
 }
+
+#[tauri::command]
+pub fn detect_terminals() -> Result<serde_json::Value, String> {
+    let mut shells: Vec<String> = vec![];
+    let mut externals: Vec<serde_json::Value> = vec![];
+
+    // Detect available shells
+    for shell_bin in &["zsh", "bash", "fish"] {
+        if std::process::Command::new("which")
+            .arg(shell_bin)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            shells.push(shell_bin.to_string());
+        }
+    }
+    if shells.is_empty() { shells.push("zsh".to_string()); }
+
+    // Detect macOS terminal apps in /Applications and ~/Applications
+    let mut app_dirs = vec![std::path::PathBuf::from("/Applications")];
+    if let Some(home) = dirs::home_dir() { app_dirs.push(home.join("Applications")); }
+
+    let known_terms: Vec<(&str, &str)> = vec![
+        ("Ghostty", "Ghostty.app"),
+        ("iTerm2", "iTerm.app"),
+        ("Terminal", "Terminal.app"),
+        ("Kitty", "kitty.app"),
+        ("Alacritty", "Alacritty.app"),
+        ("Warp", "Warp.app"),
+    ];
+
+    for (name, app_name) in &known_terms {
+        for app_dir in &app_dirs {
+            if app_dir.join(app_name).exists() {
+                externals.push(serde_json::json!({ "name": name, "app": app_name }));
+                break;
+            }
+        }
+    }
+
+    Ok(serde_json::json!({ "shells": shells, "externals": externals }))
+}

@@ -27,9 +27,9 @@ export function setupDragDrop(
       dragOverlay.textContent = "\u{1F4C4} " + (dragPath.split("/").pop() || dragPath);
       document.body.appendChild(dragOverlay);
     }
-    // Center label above cursor
+    // Center label on cursor
     dragOverlay.style.left = `${e.clientX - dragOverlay.offsetWidth / 2}px`;
-    dragOverlay.style.top = `${e.clientY - 28}px`;
+    dragOverlay.style.top = `${e.clientY - dragOverlay.offsetHeight / 2}px`;
 
     const elUnder = document.elementFromPoint(e.clientX, e.clientY);
     const inTerm = elUnder && (
