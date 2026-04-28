@@ -260,3 +260,10 @@ i[data-lucide] {
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: space-between;
 }
+
+/* ─── Drag & Drop ─── */
+#terminal-container.drag-over,
+#workspace-list.drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}

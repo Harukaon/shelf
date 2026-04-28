@@ -74,23 +74,46 @@ class App {
   }
 
   private setupDragDrop() {
-    const dropTargets = [this.terminalContainer, this.fileTree];
-    dropTargets.forEach((el) => {
-      el.addEventListener("dragover", (e: DragEvent) => {
-        e.preventDefault();
-        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-      });
-      el.addEventListener("drop", (e: DragEvent) => {
-        e.preventDefault();
-        const files = e.dataTransfer?.files;
-        if (files && files.length > 0) {
-          const path = (files[0] as unknown as { path?: string }).path || files[0].name;
-          if (el === this.terminalContainer && this.activeTabId) {
+    const dropTargets: Array<{ el: HTMLElement; handler: (path: string) => void }> = [
+      {
+        el: this.terminalContainer,
+        handler: (path: string) => {
+          if (this.activeTabId) {
             const tab = this.tabs.get(this.activeTabId);
             if (tab?.pty) {
               tab.pty.write(`"${path}" `);
+              console.log("[Shelf] drag: wrote path to terminal:", path);
             }
           }
+        },
+      },
+      {
+        el: this.workspaceList,
+        handler: (path: string) => {
+          console.log("[Shelf] drag: adding workspace from drop:", path);
+          this.addWorkspace(path);
+        },
+      },
+    ];
+
+    dropTargets.forEach(({ el, handler }) => {
+      el.addEventListener("dragover", (e: DragEvent) => {
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+        el.classList.add("drag-over");
+      });
+      el.addEventListener("dragleave", () => {
+        el.classList.remove("drag-over");
+      });
+      el.addEventListener("drop", (e: DragEvent) => {
+        e.preventDefault();
+        el.classList.remove("drag-over");
+        console.log("[Shelf] drop event on:", (e.currentTarget as HTMLElement)?.id || el.className);
+        const files = e.dataTransfer?.files;
+        if (files && files.length > 0) {
+          const path = (files[0] as unknown as { path?: string }).path || "";
+          console.log("[Shelf] drop file path:", path);
+          if (path) handler(path);
         }
       });
     });
