@@ -406,6 +406,7 @@ class App {
   }
 
   private _openSessionTab(session: Session, wsPath: string) {
+    console.log(`[Shelf] openSessionTab id=${session.id} title="${session.display_title}" tabs=${this.tabs.tabsMap.size}`);
     for (const [, tab] of this.tabs.tabsMap) {
       if (tab.sessionId === session.id) { this.tabs.activateTab(tab.id); return; }
     }
