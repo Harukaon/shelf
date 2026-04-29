@@ -26,6 +26,7 @@ pub fn run() {
             commands::sessions::rename_session,
             commands::sessions::delete_session,
             commands::files::list_files,
+            commands::files::delete_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

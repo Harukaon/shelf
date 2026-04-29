@@ -4,6 +4,14 @@ import { showContextMenu } from "./context-menu";
 import { t } from "../i18n";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 
+function showToast(msg: string) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 300); }, 2500);
+}
+
 const childCache = new Map<string, FileEntry[]>();
 
 export function clearFileCache() {
@@ -89,7 +97,13 @@ export async function renderFileTree(
         }},
         { label: t("context.copy_rel"), action: () => { navigator.clipboard.writeText(relPath); }},
         { label: t("context.copy_abs"), action: () => { navigator.clipboard.writeText(absPath); }},
-        { label: t("context.refresh"), action: () => { onRefreshTree?.(); }},
+        { label: t("context.delete"), action: async () => {
+          try {
+            await tauriInvoke("delete_file", { path: absPath });
+            if (onRefreshTree) onRefreshTree();
+            showToast(t("toast.deleted"));
+          } catch (_) {}
+        }},
       ], e.clientX, e.clientY);
     });
 
