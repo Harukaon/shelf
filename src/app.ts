@@ -251,6 +251,28 @@ class App {
     panel.querySelector("#rename-cancel")!.addEventListener("click", close);
   }
 
+  private async _deleteSession(session: Session, wsPath: string) {
+    try {
+      await tauriInvoke("delete_session", { sessionId: session.id });
+      this.activeSessionIds.delete(session.id);
+      if (this.focusedSessionId === session.id) this.focusedSessionId = null;
+      for (const [id, tab] of this.tabs.tabsMap) {
+        if (tab.sessionId === session.id) this.tabs.closeTab(id);
+      }
+      await this.ws.scanSessions(wsPath);
+      this._renderWorkspaces();
+      this._showToast(t("toast.deleted"));
+    } catch (e) { console.error("Delete failed:", e); }
+  }
+
+  private _showToast(msg: string) {
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 300); }, 2500);
+  }
+
   private async _newClaudeSession(wsPath: string) {
     const tabId = crypto.randomUUID();
     const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
@@ -452,7 +474,8 @@ class App {
             e.stopPropagation();
             console.log("[Shelf] session contextmenu:", session.display_title);
             showContextMenu(
-              [{ label: t("context.rename"), action: () => this._renameSessionPrompt(session) }],
+              [{ label: t("context.rename"), action: () => this._renameSessionPrompt(session) },
+               { label: t("context.delete"), action: () => this._deleteSession(session, ws.path) }],
               e.clientX, e.clientY,
             );
           });

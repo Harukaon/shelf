@@ -41,6 +41,8 @@ const dict: Record<string, Record<string, string>> = {
     "context.copy_abs": "Copy Absolute Path",
     "context.copy_rel": "Copy Relative Path",
     "context.refresh": "Refresh",
+    "context.delete": "Delete",
+    "toast.deleted": "Session moved to trash",
   },
 
   zh: {
@@ -85,6 +87,8 @@ const dict: Record<string, Record<string, string>> = {
     "context.copy_abs": "复制绝对路径",
     "context.copy_rel": "复制相对路径",
     "context.refresh": "刷新",
+    "context.delete": "删除",
+    "toast.deleted": "会话记录已移动到回收站",
   },
 };
 

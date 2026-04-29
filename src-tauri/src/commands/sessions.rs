@@ -81,3 +81,28 @@ pub fn rename_session(session_id: String, new_title: String) -> Result<(), Strin
     }
     Err(format!("Session file not found for id: {}", session_id))
 }
+
+#[tauri::command]
+pub fn delete_session(session_id: String) -> Result<(), String> {
+    let projects_dir = dirs::home_dir()
+        .ok_or("Cannot find home directory")?
+        .join(".claude")
+        .join("projects");
+
+    let entries = fs::read_dir(&projects_dir)
+        .map_err(|e| format!("Cannot read projects dir: {}", e))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Dir entry error: {}", e))?;
+        let project_dir = entry.path();
+        if !project_dir.is_dir() { continue; }
+        let jsonl_path = project_dir.join(format!("{}.jsonl", session_id));
+        if jsonl_path.exists() {
+            trash::delete(&jsonl_path)
+                .map_err(|e| format!("Trash error: {}", e))?;
+            println!("[Rust] delete_session: moved to trash {:?}", jsonl_path);
+            return Ok(());
+        }
+    }
+    Err(format!("Session file not found for id: {}", session_id))
+}

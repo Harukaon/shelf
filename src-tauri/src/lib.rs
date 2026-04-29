@@ -24,6 +24,7 @@ pub fn run() {
             commands::sessions::scan_sessions,
             commands::sessions::create_session,
             commands::sessions::rename_session,
+            commands::sessions::delete_session,
             commands::files::list_files,
         ])
         .run(tauri::generate_context!())

@@ -262,6 +262,14 @@ i[data-lucide] {
 }
 .context-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .context-item.disabled { color: var(--text-muted); cursor: default; pointer-events: none; }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: var(--bg-active); color: var(--text-primary);
+  padding: 8px 20px; border-radius: 8px; font-size: 12px; z-index: 9999;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3); transition: opacity 0.3s;
+}
 .settings-note { font-size: 11px; color: var(--text-muted); margin-bottom: 16px; }
 .settings-note kbd {
   background: var(--bg-hover); padding: 1px 5px; border-radius: 3px;
