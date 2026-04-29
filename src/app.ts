@@ -96,13 +96,6 @@ class App {
         e.stopPropagation();
         this._showQuitDialog();
       }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "w") {
-        const activeTab = this.tabs.getActiveTab();
-        if (activeTab && activeTab.closable && activeTab.id !== START_TAB_ID) {
-          e.preventDefault();
-          this.tabs.closeTab(activeTab.id, () => this._showStartPage());
-        }
-      }
     });
     for (const ws of this.ws.workspaces) { await this.ws.scanSessions(ws.path); }
     this._renderWorkspaces();
