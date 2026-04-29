@@ -73,7 +73,7 @@ class Pty implements IPty {
     const invokeArgs: Record<string, unknown> = {
       file,
       args: args ?? [],
-      termName: opt.name ?? "Terminal",
+      termName: opt.name ?? "xterm-256color",
       cols: this.cols,
       rows: this.rows,
       cwd: opt.cwd ?? null,

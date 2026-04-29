@@ -60,7 +60,6 @@ pub async fn pty_spawn<R: Runtime>(
     state: tauri::State<'_, PtyState>,
     _app_handle: AppHandle<R>,
 ) -> Result<u32, String> {
-    let _ = term_name;
     let _ = encoding;
     let _ = handle_flow_control;
     let _ = flow_control_pause;
@@ -78,11 +77,20 @@ pub async fn pty_spawn<R: Runtime>(
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
 
+    let term_name = term_name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != "Terminal")
+        .unwrap_or_else(|| "xterm-256color".to_string());
+
     let mut cmd = CommandBuilder::new(file);
     cmd.args(args);
     if let Some(cwd) = cwd {
         cmd.cwd(OsString::from(cwd));
     }
+    cmd.env(OsString::from("TERM"), OsString::from(term_name));
+    cmd.env(OsString::from("COLORTERM"), OsString::from("truecolor"));
+    cmd.env(OsString::from("CLICOLOR"), OsString::from("1"));
+    cmd.env(OsString::from("TERM_PROGRAM"), OsString::from("Shelf"));
     for (k, v) in env.iter() {
         cmd.env(OsString::from(k), OsString::from(v));
     }
