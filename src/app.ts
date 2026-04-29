@@ -5,7 +5,7 @@ import { tauriInvoke, refreshIcons, escapeHtml, formatDate } from "./helpers";
 import { Session, FileEntry, TabInfo } from "./types";
 import { TabManager } from "./modules/tabs";
 import { WorkspaceManager } from "./modules/workspace";
-import { createTerminalTab, writeToPty } from "./modules/terminal";
+import { createTerminalTab, repaintTerminal, writeToPty } from "./modules/terminal";
 import { renderFileTree, clearFileCache } from "./modules/files";
 import { setupDragDrop, setupPanelResize } from "./modules/dragdrop";
 import { t, setLang, getLang } from "./i18n";
@@ -95,9 +95,8 @@ class App {
     );
 
     window.addEventListener("resize", () => {
-      this.tabs.tabsMap.forEach(t => {
-        if (t.fitAddon) try { t.fitAddon.fit(); } catch (_) {}
-      });
+      const tab = this.tabs.getActiveTab();
+      if (tab) repaintTerminal(tab);
     });
 
     await this._loadSettings();
@@ -137,7 +136,7 @@ class App {
     const container = document.createElement("div");
     container.className = "terminal-wrapper start-page";
     container.dataset.tabId = START_TAB_ID;
-    container.style.cssText = "width:100%;height:100%;display:block;";
+    container.style.cssText = "width:100%;height:100%;visibility:visible;pointer-events:auto;";
     container.innerHTML = `
       <div class="start-page-content">
         <div class="start-page-icon">🖥</div>
@@ -214,12 +213,10 @@ class App {
     document.body.appendChild(backdrop);
     document.body.appendChild(panel);
     panel.querySelector("#cancel-close")!.addEventListener("click", close);
-    panel.querySelector("#confirm-close")!.addEventListener("click", () => {
+    panel.querySelector("#confirm-close")!.addEventListener("click", async () => {
       close();
-      for (const [, tab] of this.tabs.tabsMap) {
-        if (tab.pty) try { tab.pty.kill(); } catch (_) {}
-      }
-      tauriInvoke("exit_app");
+      await this.tabs.closeAllPtys();
+      await tauriInvoke("exit_app");
     });
   }
 
@@ -876,7 +873,10 @@ class App {
       draggable: ".tab-item.closable",
       filter: ".tab-close",
       preventOnFilter: false,
-      forceFallback: true,
+      forceFallback: false,
+      delayOnTouchOnly: true,
+      touchStartThreshold: 6,
+      fallbackTolerance: 6,
       onEnd(evt) {
         console.log("[Shelf] sortable onEnd tabId:", evt.item.dataset.tabId, "oldIndex:", evt.oldIndex, "newIndex:", evt.newIndex);
         const tabId = evt.item.dataset.tabId;

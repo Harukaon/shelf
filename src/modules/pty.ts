@@ -26,6 +26,7 @@ export interface IPty {
   clear(): void;
   write(data: string): void;
   kill(signal?: string): void;
+  killAndWait(signal?: string): Promise<void>;
 }
 
 export interface IDisposable {
@@ -121,6 +122,18 @@ class Pty implements IPty {
     this._init
       .then(() => invoke("pty_kill", { pid: this.pid }))
       .catch(() => {});
+  }
+
+  async killAndWait(): Promise<void> {
+    this._closed = true;
+    this._onDataListeners.length = 0;
+    this._onExitListeners.length = 0;
+    try {
+      await this._init;
+      await invoke("pty_kill", { pid: this.pid });
+    } catch (_) {
+      /* ignore */
+    }
   }
 
   private async readLoop() {

@@ -1,5 +1,5 @@
 import { TabInfo } from "../types";
-import { flushTabBuffer } from "./terminal";
+import { flushTabBuffer, repaintTerminal } from "./terminal";
 
 export class TabManager {
   private tabs = new Map<string, TabInfo>();
@@ -23,23 +23,26 @@ export class TabManager {
   addTab(tab: TabInfo, activate = true) {
     this.tabs.set(tab.id, tab);
     if (activate || !this.activeTabId) this.activateTab(tab.id);
-    this.renderTabs();
+    if (!activate && this.activeTabId) this.renderTabs();
     this.renderWorkspaces();
   }
 
   activateTab(tabId: string) {
     if (this.activeTabId === tabId) return;
-    this.tabs.forEach((t) => { t.containerEl.style.display = "none"; t.active = false; });
     const prev = this.tabs.get(this.activeTabId || "");
     if (prev?.terminal) try { prev.terminal.blur(); } catch (_) {}
+    this.tabs.forEach((t) => {
+      t.containerEl.style.visibility = "hidden";
+      t.containerEl.style.pointerEvents = "none";
+      t.active = false;
+    });
     const tab = this.tabs.get(tabId);
     if (tab) {
-      tab.containerEl.style.display = "block";
+      tab.containerEl.style.visibility = "visible";
+      tab.containerEl.style.pointerEvents = "auto";
       tab.active = true;
       flushTabBuffer(tab);
-      if (tab.fitAddon) {
-        try { tab.fitAddon.fit(); tab.terminal.focus(); } catch (_) {}
-      }
+      repaintTerminal(tab);
       if (this.onActivateTab) this.onActivateTab(tab);
     }
     this.activeTabId = tabId;
@@ -70,12 +73,26 @@ export class TabManager {
     this.renderWorkspaces();
   }
 
+  async closeAllPtys() {
+    const tasks: Promise<void>[] = [];
+    for (const tab of this.tabs.values()) {
+      if (tab.pty) tasks.push(tab.pty.killAndWait());
+    }
+    await Promise.allSettled(tasks);
+  }
+
   switchToStartPage(startTabId: string) {
     this.tabs.forEach((t) => {
-      t.containerEl.style.display = "none";
+      t.containerEl.style.visibility = "hidden";
+      t.containerEl.style.pointerEvents = "none";
+      t.active = false;
     });
     const start = this.tabs.get(startTabId);
-    if (start) start.containerEl.style.display = "block";
+    if (start) {
+      start.containerEl.style.visibility = "visible";
+      start.containerEl.style.pointerEvents = "auto";
+      start.active = true;
+    }
     this.activeTabId = startTabId;
     this.renderTabs();
     this.renderWorkspaces();

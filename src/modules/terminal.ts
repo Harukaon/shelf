@@ -11,6 +11,30 @@ export function flushTabBuffer(tab: TabInfo) {
   tab.dataBuffer.length = 0;
 }
 
+export function refitTerminal(tab: TabInfo) {
+  if (!tab.fitAddon || !tab.terminal || !tab.pty || tab.containerEl.style.visibility === "hidden") return;
+  try {
+    tab.fitAddon.fit();
+    const { cols, rows } = tab.terminal;
+    if (cols > 0 && rows > 0) tab.pty.resize(cols, rows);
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+export function repaintTerminal(tab: TabInfo) {
+  if (!tab.terminal || tab.containerEl.style.visibility === "hidden") return;
+  requestAnimationFrame(() => {
+    try {
+      refitTerminal(tab);
+      tab.terminal.refresh(0, tab.terminal.rows - 1);
+      tab.terminal.focus();
+    } catch (_) {
+      /* ignore */
+    }
+  });
+}
+
 let TERMINAL_THEME = {
   background: "#1e1e2e",
   foreground: "#cdd6f4",
@@ -115,7 +139,7 @@ export function createTerminalTab(
   const wrapper = document.createElement("div");
   wrapper.className = "terminal-wrapper";
   wrapper.dataset.tabId = tabId;
-  wrapper.style.cssText = "width:100%;height:100%;display:none;";
+  wrapper.style.cssText = "width:100%;height:100%;visibility:hidden;pointer-events:none;";
   terminal.open(wrapper);
   terminalContainer.appendChild(wrapper);
   tabInfo.containerEl = wrapper;

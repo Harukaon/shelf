@@ -193,10 +193,10 @@ pub async fn pty_resize(
 
 #[tauri::command]
 pub async fn pty_kill(pid: u32, state: tauri::State<'_, PtyState>) -> Result<(), String> {
-    let Some(session) = state.sessions.read().await.get(&pid).cloned() else {
+    let Some(session) = state.sessions.write().await.remove(&pid) else {
         return Ok(());
     };
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         session
             .child_killer
             .lock()
@@ -205,9 +205,7 @@ pub async fn pty_kill(pid: u32, state: tauri::State<'_, PtyState>) -> Result<(),
             .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?;
-    state.sessions.write().await.remove(&pid);
-    result
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
