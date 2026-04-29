@@ -244,29 +244,32 @@ i[data-lucide] {
 #add-workspace-btn {
   flex: 1; padding: 8px;
   background: transparent; color: var(--text-muted);
-  border: none; border-top: 1px solid var(--border);
-  cursor: pointer; font-size: 12px; font-family: inherit;
-  transition: color 0.15s, background 0.15s; flex-shrink: 0;
+  border: none; cursor: pointer; font-size: 12px; font-family: inherit;
+  transition: color 0.15s, background 0.15s;
   display: flex; align-items: center; justify-content: center; gap: 6px;
 }
 #add-workspace-btn:hover { color: var(--accent); background: var(--bg-hover); }
 
+#left-panel-bottom {
+  display: flex;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
 #refresh-sessions-btn {
   width: 36px; padding: 8px 0;
   background: transparent; color: var(--text-muted);
-  border: none; border-top: 1px solid var(--border); border-left: 1px solid var(--border);
+  border: none; border-left: 1px solid var(--border);
   cursor: pointer; font-size: 14px; font-family: inherit;
   transition: color 0.15s, background 0.15s; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
 }
 #refresh-sessions-btn:hover { color: var(--accent); background: var(--bg-hover); }
 #refresh-sessions-btn.spinning {
-  color: var(--accent);
-  pointer-events: none;
+  color: var(--accent); pointer-events: none;
 }
 #refresh-sessions-btn.spinning span {
-  display: inline-block;
-  animation: spin 0.8s linear infinite;
+  display: inline-block; animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
