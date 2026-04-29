@@ -37,7 +37,7 @@ export function repaintTerminal(tab: TabInfo) {
 
 const TERMINAL_THEME = {
   background: "#282C34",
-  foreground: "#F3F3F4",
+  foreground: "#DCDDDF",
   cursor: "#F3F3F4",
   selectionBackground: "#3A4250",
   black: "#2b313c",
@@ -68,9 +68,10 @@ export function createTerminalTab(
   const terminal = new Terminal({
     cursorBlink: true,
     fontSize: 13,
-    fontFamily: '"SF Mono", "Fira Code", "JetBrains Mono", "Menlo", monospace',
+    fontFamily: '"SF Mono", "Menlo", monospace',
     fontWeight: 300,
-    fontWeightBold: 500,
+    fontWeightBold: 400,
+    drawBoldTextInBrightColors: false,
     theme: TERMINAL_THEME,
     allowProposedApi: true,
   });
