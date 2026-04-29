@@ -189,6 +189,10 @@ i[data-lucide] {
 .pinned-label {
   padding: 6px 12px; font-size: 10px; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: 0.5px;
+  display: flex; align-items: center; gap: 4px;
+}
+.pinned-label svg {
+  width: 12px; height: 12px;
 }
 .pinned-item {
   padding-left: 12px !important;
