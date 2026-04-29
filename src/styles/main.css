@@ -93,6 +93,9 @@ i[data-lucide] {
 .tab-item.active { background: var(--tab-active-bg); color: var(--accent); border-color: var(--border); }
 .tab-item .tab-dot-icon { color: var(--green); width: 12px; height: 12px; flex-shrink: 0; }
 .tab-item.active .tab-dot-icon { color: var(--accent); }
+.tab-item.active .tab-dot-icon svg circle:first-child { fill: currentColor; }
+.session-item.focused .session-icon svg circle:first-child { fill: currentColor; }
+.pinned-item.focused .session-icon svg circle:first-child { fill: currentColor; }
 .tab-item .tab-title { overflow: hidden; text-overflow: ellipsis; }
 .tab-item .tab-close { line-height: 1; border-radius: 3px; opacity: 0.5; flex-shrink: 0; display: flex; align-items: center; }
 .tab-item .tab-close:hover { opacity: 1; background: var(--red); color: var(--bg-primary); }
