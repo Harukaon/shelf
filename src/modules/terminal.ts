@@ -1,7 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { spawn, IPty } from "./pty";
-import { TabInfo } from "../types";
+import { TabInfo, TerminalThemeConfig } from "../types";
 import { t } from "../i18n";
 
 export function flushTabBuffer(tab: TabInfo) {
@@ -35,28 +35,101 @@ export function repaintTerminal(tab: TabInfo) {
   });
 }
 
-let TERMINAL_THEME = {
-  background: "#1e1e2e",
-  foreground: "#cdd6f4",
-  cursor: "#f5e0dc",
-  selectionBackground: "#45475a",
-  black: "#45475a",
-  red: "#f38ba8",
-  green: "#a6e3a1",
-  yellow: "#f9e2af",
-  blue: "#89b4fa",
-  magenta: "#cba6f7",
-  cyan: "#94e2d5",
-  white: "#bac2de",
-  brightBlack: "#585b70",
-  brightRed: "#f38ba8",
-  brightGreen: "#a6e3a1",
-  brightYellow: "#f9e2af",
-  brightBlue: "#89b4fa",
-  brightMagenta: "#cba6f7",
-  brightCyan: "#94e2d5",
-  brightWhite: "#a6adc8",
+const ANSI_THEME = {
+  black: "#2b313c",
+  red: "#e06c75",
+  green: "#98c379",
+  yellow: "#d19a66",
+  blue: "#61afef",
+  magenta: "#c678dd",
+  cyan: "#56b6c2",
+  white: "#d7dae0",
+  brightBlack: "#5c6370",
+  brightRed: "#e86671",
+  brightGreen: "#a5d178",
+  brightYellow: "#e5c07b",
+  brightBlue: "#71b8ff",
+  brightMagenta: "#d48bea",
+  brightCyan: "#66c8d5",
+  brightWhite: "#f1f3f5",
 };
+
+export const TERMINAL_THEME_PRESETS: Record<string, TerminalThemeConfig> = {
+  shelf_comfort: {
+    preset: "shelf_comfort",
+    background: "#282C34",
+    foreground: "#E0E0E1",
+    cursor: "#F3F3F4",
+    selectionBackground: "#3A4250",
+  },
+  ghostty: {
+    preset: "ghostty",
+    background: "#282C34",
+    foreground: "#F3F3F4",
+    cursor: "#F3F3F4",
+    selectionBackground: "#3A4250",
+  },
+  mac_terminal: {
+    preset: "mac_terminal",
+    background: "#212734",
+    foreground: "#E0E0E1",
+    cursor: "#F3F3F4",
+    selectionBackground: "#384252",
+  },
+  catppuccin: {
+    preset: "catppuccin",
+    background: "#1E1E2E",
+    foreground: "#CDD6F4",
+    cursor: "#F5E0DC",
+    selectionBackground: "#45475A",
+  },
+};
+
+export const DEFAULT_TERMINAL_THEME: TerminalThemeConfig = TERMINAL_THEME_PRESETS.shelf_comfort;
+
+let terminalThemeConfig: TerminalThemeConfig = { ...DEFAULT_TERMINAL_THEME };
+
+function toXtermTheme(theme: TerminalThemeConfig) {
+  return {
+    ...ANSI_THEME,
+    background: theme.background,
+    foreground: theme.foreground,
+    cursor: theme.cursor,
+    selectionBackground: theme.selectionBackground,
+  };
+}
+
+export function normalizeTerminalTheme(input?: Partial<TerminalThemeConfig> | null): TerminalThemeConfig {
+  const preset = input?.preset === "custom"
+    ? "custom"
+    : input?.preset && TERMINAL_THEME_PRESETS[input.preset]
+    ? input.preset
+    : DEFAULT_TERMINAL_THEME.preset;
+  const base = preset === "custom" ? DEFAULT_TERMINAL_THEME : TERMINAL_THEME_PRESETS[preset] || DEFAULT_TERMINAL_THEME;
+  return {
+    ...base,
+    ...input,
+    preset,
+  };
+}
+
+export function getTerminalThemeConfig(): TerminalThemeConfig {
+  return { ...terminalThemeConfig };
+}
+
+export function setTerminalThemeConfig(theme: TerminalThemeConfig) {
+  terminalThemeConfig = normalizeTerminalTheme(theme);
+}
+
+export function applyTerminalTheme(tab: TabInfo, theme: TerminalThemeConfig = terminalThemeConfig) {
+  if (!tab.terminal) return;
+  tab.terminal.options.theme = toXtermTheme(theme);
+  try {
+    tab.terminal.refresh(0, tab.terminal.rows - 1);
+  } catch (_) {
+    /* ignore */
+  }
+}
 
 export function createTerminalTab(
   tabId: string,
@@ -69,7 +142,7 @@ export function createTerminalTab(
     cursorBlink: true,
     fontSize: 13,
     fontFamily: '"SF Mono", "Fira Code", "JetBrains Mono", "Menlo", monospace',
-    theme: TERMINAL_THEME,
+    theme: toXtermTheme(terminalThemeConfig),
     allowProposedApi: true,
   });
   const fitAddon = new FitAddon();

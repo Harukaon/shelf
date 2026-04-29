@@ -278,16 +278,39 @@ i[data-lucide] {
 .settings-panel {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
   background: var(--bg-secondary); border: 1px solid var(--border);
-  border-radius: 10px; padding: 20px; min-width: 300px; z-index: 1001;
+  border-radius: 10px; padding: 20px; min-width: 360px; z-index: 1001;
   box-shadow: 0 12px 40px rgba(0,0,0,0.5);
 }
 .settings-title { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary); }
+.settings-section-title {
+  margin: 4px 0 12px; padding-top: 4px; border-top: 1px solid var(--border);
+  color: var(--text-primary); font-size: 12px; font-weight: 600;
+}
 .settings-row { margin-bottom: 16px; display: flex; align-items: center; gap: 12px; }
 .settings-row label { font-size: 13px; color: var(--text-secondary); flex-shrink: 0; }
-.settings-row select {
+.settings-row select,
+.settings-row input {
   flex: 1; padding: 6px 10px; background: var(--bg-primary); color: var(--text-primary);
   border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 13px;
   outline: none;
+}
+.settings-theme-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px;
+}
+.settings-theme-grid label {
+  display: flex; flex-direction: column; gap: 5px; color: var(--text-secondary); font-size: 11px;
+}
+.settings-theme-grid input {
+  width: 100%; padding: 6px 8px; background: var(--bg-primary); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 12px; outline: none;
+}
+.settings-theme-preview {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px;
+  font-family: "SF Mono", "Fira Code", "JetBrains Mono", "Menlo", monospace; font-size: 12px;
+}
+.settings-theme-preview strong {
+  padding: 1px 4px; background: var(--preview-selection); color: inherit; border-radius: 3px; font-weight: 500;
 }
 .settings-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .settings-actions button {

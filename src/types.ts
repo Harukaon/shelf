@@ -18,6 +18,14 @@ export interface Session {
   version: string;
 }
 
+export interface TerminalThemeConfig {
+  preset: string;
+  background: string;
+  foreground: string;
+  cursor: string;
+  selectionBackground: string;
+}
+
 export interface FileEntry {
   name: string;
   path: string;
