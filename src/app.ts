@@ -86,6 +86,9 @@ class App {
     this._updateStaticTexts();
     this._createStartTab();
     await this.ws.load();
+    // Pre-scan all workspaces so pinned sessions show immediately
+    for (const ws of this.ws.workspaces) { await this.ws.scanSessions(ws.path); }
+    this._renderWorkspaces();
     this._startPassivePolling();
   }
 
