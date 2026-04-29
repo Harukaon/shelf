@@ -611,7 +611,9 @@ class App {
       draggable: ".tab-item.closable",
       filter: ".tab-close",
       preventOnFilter: false,
+      forceFallback: true,
       onEnd(evt) {
+        console.log("[Shelf] sortable onEnd tabId:", evt.item.dataset.tabId, "oldIndex:", evt.oldIndex, "newIndex:", evt.newIndex);
         const tabId = evt.item.dataset.tabId;
         if (tabId && evt.newIndex != null) {
           self.tabs.reorderSilent(tabId, evt.newIndex);
