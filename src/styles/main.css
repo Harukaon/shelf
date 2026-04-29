@@ -200,6 +200,18 @@ i[data-lucide] {
   font-family: inherit; font-size: 11px; border: 1px solid var(--border);
 }
 
+.start-page-warning {
+  margin-top: 24px; padding: 12px 16px;
+  background: rgba(243, 139, 168, 0.1);
+  border: 1px solid rgba(243, 139, 168, 0.2);
+  border-radius: 6px; font-size: 11px; line-height: 1.7;
+  color: var(--text-muted); text-align: left;
+}
+.start-page-warning code {
+  background: var(--bg-hover); padding: 1px 4px; border-radius: 3px;
+  font-family: inherit; font-size: 10px;
+}
+
 /* + menu */
 .picker-menu {
   background: var(--bg-secondary); border: 1px solid var(--border);
