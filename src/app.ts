@@ -297,9 +297,14 @@ class App {
           deletePending = true;
           removeBtn.style.color = "var(--red)";
           removeBtn.style.opacity = "1";
-          removeBtn.innerHTML = '<i data-lucide="trash-2"></i>';
+          removeBtn.innerHTML = '<i data-lucide="x"></i>';
           refreshIcons();
-          setTimeout(() => { deletePending = false; removeBtn.style.opacity = "0.5"; }, 3000);
+          setTimeout(() => {
+            deletePending = false;
+            removeBtn.style.opacity = "0.5";
+            removeBtn.innerHTML = '<i data-lucide="trash-2"></i>';
+            refreshIcons();
+          }, 3000);
         }
       });
       header.addEventListener("click", () => {
@@ -352,15 +357,21 @@ class App {
     this.tabList.innerHTML = "";
     for (const tab of this.tabs.tabsMap.values()) {
       const tabEl = document.createElement("div");
-      tabEl.className = `tab-item${tab.id === this.tabs.activeId ? " active" : ""}`;
+      const isTabActive = tab.id === this.tabs.activeId;
+      tabEl.className = `tab-item${isTabActive ? " active" : ""}`;
       const closeHtml = tab.closable ? '<span class="tab-close" title="Close"><i data-lucide="x"></i></span>' : "";
       tabEl.innerHTML = `
-        <i data-lucide="circle" class="tab-dot-icon"></i>
+        <i data-lucide="${isTabActive ? "disc" : "circle"}" class="tab-dot-icon"></i>
         <span class="tab-title">${escapeHtml(tab.title)}</span>
         ${closeHtml}`;
       if (tab.closable) {
         tabEl.querySelector(".tab-close")!.addEventListener("click", (e) => {
-          e.stopPropagation(); this.tabs.closeTab(tab.id, () => this._showStartPage());
+          e.stopPropagation();
+          if (tab.sessionId) {
+            this.activeSessionIds.delete(tab.sessionId);
+            if (this.focusedSessionId === tab.sessionId) this.focusedSessionId = null;
+          }
+          this.tabs.closeTab(tab.id, () => this._showStartPage());
         });
       }
       tabEl.addEventListener("click", () => this.tabs.activateTab(tab.id));
