@@ -49,13 +49,13 @@ export function createTerminalTab(
     const spawnOpts: Record<string, unknown> = { cols: terminal.cols, rows: terminal.rows };
     if (options?.cwd) spawnOpts.cwd = options.cwd;
     if (options?.command) {
-      // Spawn command directly (no shell — avoids history pollution)
       pty = spawn(options.command.bin, options.command.args, spawnOpts);
     } else {
       const shellBin = options?.shell || "zsh";
       pty = spawn(shellBin, [], spawnOpts);
     }
-    console.log(`[Terminal] tab ${tabId} spawning:`, options?.command?.bin || options?.shell || "zsh", options?.command?.args || [], "cwd:", options?.cwd);
+    console.log(`[Terminal] tab ${tabId} pid=${pty.pid} cmd=`, options?.command?.bin || options?.shell || "zsh", options?.command?.args || [], "cwd:", options?.cwd);
+
     pty.onData((data: Uint8Array) => {
       terminal.write(data);
     });
@@ -63,7 +63,7 @@ export function createTerminalTab(
       onPtyWrite(tabId, data);
     });
     pty.onExit((exit) => {
-      console.log(`[Terminal] pty exited tab ${tabId}, code:`, exit.exitCode, "signal:", exit.signal);
+      console.log(`[Terminal] pty exited tab ${tabId} pid=${pty?.pid} code=`, exit.exitCode, "signal:", exit.signal);
       terminal.write(`\r\n${t("process.exited")}\r\n`);
     });
   } catch (e) {

@@ -28,18 +28,18 @@ export class TabManager {
 
   activateTab(tabId: string) {
     if (this.activeTabId === tabId) return;
+    // Blur previous terminal
+    const prev = this.tabs.get(this.activeTabId || "");
+    if (prev?.terminal?.textarea) {
+      prev.terminal.blur();
+    }
     this.tabs.forEach((t) => { t.containerEl.style.display = "none"; });
     const tab = this.tabs.get(tabId);
     if (tab) {
       tab.containerEl.style.display = "block";
-      // Delay fit to let browser reflow first
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          if (tab.fitAddon) {
-            try { tab.fitAddon.fit(); tab.terminal.focus(); } catch (_) {}
-          }
-        });
-      });
+      if (tab.fitAddon) {
+        try { tab.fitAddon.fit(); tab.terminal.focus(); } catch (_) {}
+      }
       if (this.onActivateTab) this.onActivateTab(tab);
     }
     this.activeTabId = tabId;
