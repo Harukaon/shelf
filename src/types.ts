@@ -33,4 +33,6 @@ export interface TabInfo {
   fitAddon: import("@xterm/addon-fit").FitAddon;
   pty?: import("tauri-pty").IPty;
   containerEl: HTMLDivElement;
+  dataBuffer: Uint8Array[];
+  active: boolean;
 }

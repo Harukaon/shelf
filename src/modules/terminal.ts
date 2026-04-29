@@ -4,6 +4,13 @@ import { spawn, IPty } from "tauri-pty";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
 
+export function flushTabBuffer(tab: TabInfo) {
+  for (const chunk of tab.dataBuffer) {
+    tab.terminal.write(chunk);
+  }
+  tab.dataBuffer.length = 0;
+}
+
 let TERMINAL_THEME = {
   background: "#1e1e2e",
   foreground: "#cdd6f4",
@@ -44,6 +51,20 @@ export function createTerminalTab(
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
 
+  const tabInfo: TabInfo = {
+    id: tabId,
+    sessionId: options?.sessionId,
+    workspacePath: options?.workspacePath,
+    title,
+    closable: true,
+    terminal,
+    fitAddon,
+    pty: undefined,
+    containerEl: null as any,
+    dataBuffer: [],
+    active: false,
+  };
+
   let pty: IPty | undefined;
   try {
     const spawnOpts: Record<string, unknown> = { cols: terminal.cols, rows: terminal.rows };
@@ -69,11 +90,16 @@ export function createTerminalTab(
         terminal.writeln("Try closing some tabs or restarting Shelf.");
       });
 
+    tabInfo.pty = pty;
+
     pty.onData((data: Uint8Array) => {
-      terminal.write(data);
+      if (tabInfo.active) {
+        terminal.write(data);
+      } else {
+        tabInfo.dataBuffer.push(data);
+      }
     });
     terminal.onData((data: string) => {
-      console.log(`[Terminal] tab ${tabId} onData key=`, JSON.stringify(data));
       onPtyWrite(tabId, data);
     });
     pty.onExit((exit) => {
@@ -92,6 +118,7 @@ export function createTerminalTab(
   wrapper.style.cssText = "width:100%;height:100%;display:none;";
   terminal.open(wrapper);
   terminalContainer.appendChild(wrapper);
+  tabInfo.containerEl = wrapper;
 
   terminal.onResize(({ cols, rows }) => {
     if (pty && cols > 0 && rows > 0) {
@@ -103,17 +130,7 @@ export function createTerminalTab(
     }
   });
 
-  return {
-    id: tabId,
-    sessionId: options?.sessionId,
-    workspacePath: options?.workspacePath,
-    title,
-    closable: true,
-    terminal,
-    fitAddon,
-    pty,
-    containerEl: wrapper,
-  };
+  return tabInfo;
 }
 
 export function writeToPty(tab: TabInfo, data: string) {

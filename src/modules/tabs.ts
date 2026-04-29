@@ -1,4 +1,5 @@
 import { TabInfo } from "../types";
+import { flushTabBuffer } from "./terminal";
 
 export class TabManager {
   private tabs = new Map<string, TabInfo>();
@@ -28,15 +29,15 @@ export class TabManager {
 
   activateTab(tabId: string) {
     if (this.activeTabId === tabId) return;
-    // Blur previous terminal
+    // Blur & deactivate previous terminal
     const prev = this.tabs.get(this.activeTabId || "");
-    if (prev?.terminal?.textarea) {
-      prev.terminal.blur();
-    }
+    if (prev) { prev.terminal.blur(); prev.active = false; }
     this.tabs.forEach((t) => { t.containerEl.style.display = "none"; });
     const tab = this.tabs.get(tabId);
     if (tab) {
       tab.containerEl.style.display = "block";
+      tab.active = true;
+      flushTabBuffer(tab);
       if (tab.fitAddon) {
         try { tab.fitAddon.fit(); tab.terminal.focus(); } catch (_) {}
       }

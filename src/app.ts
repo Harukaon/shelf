@@ -142,6 +142,8 @@ class App {
       terminal: null as unknown as Terminal,
       fitAddon: null as unknown as FitAddon,
       containerEl: container,
+      dataBuffer: [],
+      active: true,
     };
     this.tabs.tabsMap.set(START_TAB_ID, tab);
     this.tabs.setInitActiveTab(START_TAB_ID);
