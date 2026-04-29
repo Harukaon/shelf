@@ -105,4 +105,15 @@ export class TabManager {
     this.renderTabs();
     this.renderWorkspaces();
   }
+
+  reorderSilent(tabId: string, newIndex: number) {
+    const order = this.getTabOrder().filter(id => id !== tabId);
+    order.splice(newIndex, 0, tabId);
+    const newMap = new Map<string, TabInfo>();
+    for (const id of order) {
+      const tab = this.tabs.get(id);
+      if (tab) newMap.set(id, tab);
+    }
+    this.tabs = newMap;
+  }
 }

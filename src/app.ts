@@ -12,6 +12,7 @@ import { t, setLang, getLang } from "./i18n";
 import { showTerminalMenu } from "./modules/pickers";
 import { showContextMenu } from "./modules/context-menu";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
+import Sortable from "sortablejs";
 
 const START_TAB_ID = "__start__";
 const SESSION_PAGE_SIZE = 6;
@@ -560,14 +561,19 @@ class App {
     refreshIcons();
   }
 
+  private _sortable: Sortable | null = null;
+
   private _renderTabs() {
     this.tabList.innerHTML = "";
+    if (this._sortable) { this._sortable.destroy(); this._sortable = null; }
     const order = this.tabs.getTabOrder();
+
     for (const tabId of order) {
       const tab = this.tabs.tabsMap.get(tabId)!;
       const tabEl = document.createElement("div");
       const isTabActive = tab.id === this.tabs.activeId;
-      tabEl.className = `tab-item${isTabActive ? " active" : ""}`;
+      tabEl.className = `tab-item${isTabActive ? " active" : ""}${tab.closable ? " closable" : ""}`;
+      tabEl.dataset.tabId = tab.id;
       const closeHtml = tab.closable ? '<span class="tab-close" title="Close"><i data-lucide="x"></i></span>' : "";
       tabEl.innerHTML = `
         <span class="dot-icon${isTabActive ? " active" : ""}"></span>
@@ -584,52 +590,6 @@ class App {
         });
       }
       tabEl.addEventListener("click", () => this.tabs.activateTab(tab.id));
-      // Drag to reorder (mouse-based)
-      tabEl.addEventListener("mousedown", (e: MouseEvent) => {
-        if (e.button !== 0 || !tab.closable) return;
-        const startX = e.clientX;
-        const tabRect = tabEl.getBoundingClientRect();
-        const origIdx = order.indexOf(tab.id);
-        let moved = false;
-
-        const onMove = (ev: MouseEvent) => {
-          if (Math.abs(ev.clientX - startX) < 10) return;
-          moved = true;
-          tabEl.style.opacity = "0.4";
-          // Find insertion index based on mouse position
-          let insIdx = origIdx;
-          const allTabs = Array.from(this.tabList.querySelectorAll(".tab-item"));
-          for (let i = 0; i < allTabs.length; i++) {
-            const r = allTabs[i].getBoundingClientRect();
-            if (ev.clientX < r.left + r.width / 2) {
-              insIdx = i; break;
-            }
-            insIdx = i + 1;
-          }
-          // Show insert indicator
-          allTabs.forEach((t, i) => {
-            (t as HTMLElement).classList.toggle("tab-insert-left", i === insIdx && insIdx !== origIdx && insIdx !== origIdx + 1);
-          });
-        };
-
-        const onUp = () => {
-          document.removeEventListener("mousemove", onMove);
-          document.removeEventListener("mouseup", onUp);
-          tabEl.style.opacity = "";
-          // Remove all indicators
-          this.tabList.querySelectorAll(".tab-insert-left").forEach(t => t.classList.remove("tab-insert-left"));
-          if (moved) {
-            let insIdx = origIdx;
-            const allTabs = Array.from(this.tabList.querySelectorAll(".tab-item"));
-            const idx = allTabs.indexOf(tabEl);
-            if (idx >= 0) insIdx = idx;
-            this.tabs.moveTab(tab.id, insIdx);
-          }
-        };
-
-        document.addEventListener("mousemove", onMove);
-        document.addEventListener("mouseup", onUp);
-      });
       tabEl.addEventListener("auxclick", (e) => {
         if (e.button === 1 && tab.closable) {
           e.preventDefault();
@@ -643,6 +603,21 @@ class App {
       this.tabList.appendChild(tabEl);
     }
     refreshIcons();
+
+    // SortableJS for drag-to-reorder
+    const self = this;
+    this._sortable = Sortable.create(this.tabList, {
+      animation: 150,
+      draggable: ".tab-item.closable",
+      filter: ".tab-close",
+      preventOnFilter: false,
+      onEnd(evt) {
+        const tabId = evt.item.dataset.tabId;
+        if (tabId && evt.newIndex != null) {
+          self.tabs.reorderSilent(tabId, evt.newIndex);
+        }
+      },
+    });
   }
 }
 
