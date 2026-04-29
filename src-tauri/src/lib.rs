@@ -1,12 +1,13 @@
 use tauri::Manager;
 
 mod commands;
+mod pty_plugin;
 mod session;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_pty::init())
+        .plugin(pty_plugin::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {

@@ -1,6 +1,5 @@
 use crate::session::Session;
 use std::fs;
-use std::path::PathBuf;
 
 #[tauri::command]
 pub fn scan_sessions(workspace_path: String) -> Result<Vec<Session>, String> {
