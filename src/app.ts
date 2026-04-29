@@ -24,6 +24,7 @@ class App {
   activeSessionIds = new Set<string>();
   focusedSessionId: string | null = null;
   shellSetting = "zsh";
+  claudePath = "claude";
   pinnedIds = new Set<string>();
   pendingNewSessions = new Set<string>();
   expandedDirs = new Set<string>();
@@ -86,6 +87,7 @@ class App {
 
     await this._loadSettings();
     this._updateStaticTexts();
+    this._loadClaudePath();
     this._createStartTab();
     await this.ws.load();
     this._setupCloseConfirm();
@@ -105,6 +107,13 @@ class App {
     for (const ws of this.ws.workspaces) { await this.ws.scanSessions(ws.path); }
     this._renderWorkspaces();
     this._startPassivePolling();
+  }
+
+  private async _loadClaudePath() {
+    try {
+      const path = await tauriInvoke<string>("find_claude");
+      if (path) { this.claudePath = path; console.log("[Shelf] claude found at:", path); }
+    } catch (_) { console.warn("[Shelf] claude not found, using default"); }
   }
 
   private _createStartTab() {
@@ -347,7 +356,7 @@ class App {
     const tabId = crypto.randomUUID();
     const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { cwd: wsPath, workspacePath: wsPath, command: { bin: "zsh", args: ["-i", "-l", "-c", "claude"] } },
+      { cwd: wsPath, workspacePath: wsPath, command: { bin: this.claudePath, args: [] } },
     );
     this.tabs.addTab(tab);
     this.pendingNewSessions.add(wsPath);
@@ -404,7 +413,7 @@ class App {
     const cwd = session.cwd || wsPath;
     const tab = createTerminalTab(tabId, session.display_title, this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { sessionId: session.id, cwd, workspacePath: wsPath, command: { bin: "zsh", args: ["-i", "-l", "-c", `claude --resume ${session.id}`] } },
+      { sessionId: session.id, cwd, workspacePath: wsPath, command: { bin: this.claudePath, args: ["--resume", session.id] } },
     );
     this.tabs.addTab(tab);
     this.activeSessionIds.add(session.id);

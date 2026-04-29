@@ -157,3 +157,28 @@ pub fn get_pinned() -> Result<Vec<String>, String> {
 pub fn exit_app() {
     std::process::exit(0);
 }
+
+#[tauri::command]
+pub fn find_claude() -> Result<String, String> {
+    // Try common paths
+    let candidates = vec![
+        "claude",  // PATH
+    ];
+    for c in &candidates {
+        if let Ok(out) = std::process::Command::new("which").arg(c).output() {
+            if out.status.success() {
+                return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string());
+            }
+        }
+    }
+    // Fallback: try zsh login to find it
+    if let Ok(out) = std::process::Command::new("zsh")
+        .args(["-l", "-c", "which claude"])
+        .output()
+    {
+        if out.status.success() {
+            return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string());
+        }
+    }
+    Err("claude not found".to_string())
+}

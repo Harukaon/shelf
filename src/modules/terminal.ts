@@ -55,11 +55,17 @@ export function createTerminalTab(
       const shellBin = options?.shell || "zsh";
       pty = spawn(shellBin, [], spawnOpts);
     }
+    console.log(`[Terminal] tab ${tabId} spawning:`, options?.command?.bin || options?.shell || "zsh", options?.command?.args || [], "cwd:", options?.cwd);
     pty.onData((data: Uint8Array) => {
-      if (wrapper.style.display !== "none") terminal.write(data);
+      terminal.write(data);
     });
-    terminal.onData((data: string) => onPtyWrite(tabId, data));
-    pty.onExit(() => terminal.write(`\r\n${t("process.exited")}\r\n`));
+    terminal.onData((data: string) => {
+      onPtyWrite(tabId, data);
+    });
+    pty.onExit((exit) => {
+      console.log(`[Terminal] pty exited tab ${tabId}, code:`, exit.exitCode, "signal:", exit.signal);
+      terminal.write(`\r\n${t("process.exited")}\r\n`);
+    });
   } catch (e) {
     console.error("Spawn PTY:", e);
     terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
@@ -74,7 +80,7 @@ export function createTerminalTab(
   terminalContainer.appendChild(wrapper);
 
   terminal.onResize(({ cols, rows }) => {
-    if (pty && cols > 0 && rows > 0 && wrapper.style.display !== "none") {
+    if (pty && cols > 0 && rows > 0) {
       try {
         pty.resize(cols, rows);
       } catch (_) {
