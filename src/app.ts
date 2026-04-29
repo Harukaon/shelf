@@ -89,6 +89,14 @@ class App {
     this._createStartTab();
     await this.ws.load();
     this._setupCloseConfirm();
+    // Intercept Cmd+Q (system quit shortcut)
+    window.addEventListener("keydown", (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "q") {
+        e.preventDefault();
+        e.stopPropagation();
+        this._showQuitDialog();
+      }
+    });
     for (const ws of this.ws.workspaces) { await this.ws.scanSessions(ws.path); }
     this._renderWorkspaces();
     this._startPassivePolling();
@@ -151,23 +159,28 @@ class App {
     const appWindow = getCurrentWebviewWindow();
     appWindow.onCloseRequested(async (event) => {
       event.preventDefault();
-      const panel = document.createElement("div");
-      panel.className = "settings-panel";
-      panel.innerHTML = `
-        <div class="settings-title">Quit Shelf?</div>
-        <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;">Running terminals will be closed.</p>
-        <div class="settings-actions">
-          <button id="confirm-close" style="background:var(--red);color:var(--bg-primary);border:none;">Quit</button>
-          <button id="cancel-close">Cancel</button>
-        </div>`;
-      const backdrop = document.createElement("div");
-      backdrop.className = "picker-backdrop";
-      const close = () => { panel.remove(); backdrop.remove(); };
-      document.body.appendChild(backdrop);
-      document.body.appendChild(panel);
-      panel.querySelector("#confirm-close")!.addEventListener("click", () => { close(); appWindow.destroy(); });
-      panel.querySelector("#cancel-close")!.addEventListener("click", close);
+      this._showQuitDialog();
     });
+  }
+
+  private _showQuitDialog() {
+    const appWindow = getCurrentWebviewWindow();
+    const panel = document.createElement("div");
+    panel.className = "settings-panel";
+    panel.innerHTML = `
+      <div class="settings-title">Quit Shelf?</div>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;">Running terminals will be closed.</p>
+      <div class="settings-actions">
+        <button id="confirm-close" style="background:var(--red);color:var(--bg-primary);border:none;">Quit</button>
+        <button id="cancel-close">Cancel</button>
+      </div>`;
+    const backdrop = document.createElement("div");
+    backdrop.className = "picker-backdrop";
+    const close = () => { panel.remove(); backdrop.remove(); };
+    document.body.appendChild(backdrop);
+    document.body.appendChild(panel);
+    panel.querySelector("#confirm-close")!.addEventListener("click", () => { close(); appWindow.destroy(); });
+    panel.querySelector("#cancel-close")!.addEventListener("click", close);
   }
 
   private _passiveTimer: ReturnType<typeof setInterval> | null = null;
