@@ -232,14 +232,23 @@ class App {
     panel.querySelector("#rename-cancel")!.addEventListener("click", close);
   }
 
-  private _newClaudeSession(wsPath: string) {
-    const tabId = crypto.randomUUID();
-    const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
-      (id, data) => this._writePty(id, data),
-      { cwd: wsPath, workspacePath: wsPath, shell: this.shellSetting },
-    );
-    this.tabs.addTab(tab);
-    setTimeout(() => writeToPty(tab, `claude\n`), 600);
+  private async _newClaudeSession(wsPath: string) {
+    try {
+      const result = await tauriInvoke<any>("create_session", { workspacePath: wsPath });
+      const sessionId = result.sessionId as string;
+      const tabId = crypto.randomUUID();
+      const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
+        (id, data) => this._writePty(id, data),
+        { sessionId, cwd: wsPath, workspacePath: wsPath, shell: this.shellSetting },
+      );
+      this.tabs.addTab(tab);
+      setTimeout(() => writeToPty(tab, `claude --resume ${sessionId}\n`), 600);
+      this.activeSessionIds.add(sessionId);
+      this.focusedSessionId = sessionId;
+      // Refresh session list to show the new session
+      await this.ws.scanSessions(wsPath);
+      this._renderWorkspaces();
+    } catch (e) { console.error("Create session failed:", e); }
   }
 
   private async _refreshAllSessions() {
