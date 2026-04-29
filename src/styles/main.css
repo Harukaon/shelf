@@ -112,6 +112,9 @@ i[data-lucide] {
 .tab-item .tab-title { overflow: hidden; text-overflow: ellipsis; }
 .tab-item .tab-close { line-height: 1; border-radius: 3px; opacity: 0.5; flex-shrink: 0; display: flex; align-items: center; }
 .tab-item .tab-close:hover { opacity: 1; background: var(--red); color: var(--bg-primary); }
+.tab-item.tab-insert-left {
+  border-left: 2px solid var(--accent);
+}
 
 #tab-add-btn {
   width: 28px; height: 28px;

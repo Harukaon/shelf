@@ -88,4 +88,21 @@ export class TabManager {
   getActiveTab(): TabInfo | undefined {
     return this.activeTabId ? this.tabs.get(this.activeTabId) : undefined;
   }
+
+  getTabOrder(): string[] {
+    return Array.from(this.tabs.keys());
+  }
+
+  moveTab(tabId: string, toIndex: number) {
+    const order = this.getTabOrder().filter(id => id !== tabId);
+    order.splice(toIndex, 0, tabId);
+    const newMap = new Map<string, TabInfo>();
+    for (const id of order) {
+      const tab = this.tabs.get(id);
+      if (tab) newMap.set(id, tab);
+    }
+    this.tabs = newMap;
+    this.renderTabs();
+    this.renderWorkspaces();
+  }
 }
