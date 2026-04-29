@@ -12,6 +12,7 @@ import { t, setLang, getLang } from "./i18n";
 import { showTerminalMenu } from "./modules/pickers";
 import { showContextMenu } from "./modules/context-menu";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import Sortable from "sortablejs";
 
 const START_TAB_ID = "__start__";
@@ -87,7 +88,7 @@ class App {
     this._updateStaticTexts();
     this._createStartTab();
     await this.ws.load();
-    // Pre-scan all workspaces so pinned sessions show immediately
+    this._setupCloseConfirm();
     for (const ws of this.ws.workspaces) { await this.ws.scanSessions(ws.path); }
     this._renderWorkspaces();
     this._startPassivePolling();
@@ -144,6 +145,29 @@ class App {
 
   private _updateStaticTexts() {
     this.addWorkspaceBtn.textContent = t("workspace.add");
+  }
+
+  private _setupCloseConfirm() {
+    const appWindow = getCurrentWebviewWindow();
+    appWindow.onCloseRequested(async (event) => {
+      event.preventDefault();
+      const panel = document.createElement("div");
+      panel.className = "settings-panel";
+      panel.innerHTML = `
+        <div class="settings-title">Quit Shelf?</div>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;">Running terminals will be closed.</p>
+        <div class="settings-actions">
+          <button id="confirm-close" style="background:var(--red);color:var(--bg-primary);border:none;">Quit</button>
+          <button id="cancel-close">Cancel</button>
+        </div>`;
+      const backdrop = document.createElement("div");
+      backdrop.className = "picker-backdrop";
+      const close = () => { panel.remove(); backdrop.remove(); };
+      document.body.appendChild(backdrop);
+      document.body.appendChild(panel);
+      panel.querySelector("#confirm-close")!.addEventListener("click", () => { close(); appWindow.destroy(); });
+      panel.querySelector("#cancel-close")!.addEventListener("click", close);
+    });
   }
 
   private _passiveTimer: ReturnType<typeof setInterval> | null = null;
