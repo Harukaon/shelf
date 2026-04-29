@@ -7,15 +7,21 @@ mod session;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
-        .plugin(pty_plugin::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            app.manage(pty_plugin::PtyState::default());
             let window = app.get_webview_window("main").unwrap();
             window.set_title("Shelf").ok();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            pty_plugin::pty_spawn,
+            pty_plugin::pty_write,
+            pty_plugin::pty_read,
+            pty_plugin::pty_resize,
+            pty_plugin::pty_kill,
+            pty_plugin::pty_exitstatus,
             commands::workspace::add_workspace,
             commands::workspace::remove_workspace,
             commands::workspace::list_workspaces,

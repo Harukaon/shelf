@@ -8,19 +8,15 @@ use std::{
 };
 
 use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, PtyPair, PtySize};
-use tauri::{
-    async_runtime::RwLock,
-    plugin::{Builder, TauriPlugin},
-    AppHandle, Manager, Runtime,
-};
+use tauri::{async_runtime::RwLock, AppHandle, Manager, Runtime};
 
 #[derive(Default)]
-struct PluginState {
+pub struct PtyState {
     session_id: AtomicU32,
-    sessions: RwLock<BTreeMap<PtyHandler, Arc<Session>>>,
+    sessions: RwLock<BTreeMap<u32, Arc<PtySession>>>,
 }
 
-struct Session {
+struct PtySession {
     pair: Mutex<PtyPair>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
     child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
@@ -28,10 +24,8 @@ struct Session {
     reader: Mutex<Box<dyn std::io::Read + Send>>,
 }
 
-type PtyHandler = u32;
-
 #[tauri::command]
-async fn spawn<R: Runtime>(
+pub async fn pty_spawn<R: Runtime>(
     file: String,
     args: Vec<String>,
     term_name: Option<String>,
@@ -44,9 +38,9 @@ async fn spawn<R: Runtime>(
     flow_control_pause: Option<String>,
     flow_control_resume: Option<String>,
 
-    state: tauri::State<'_, PluginState>,
+    state: tauri::State<'_, PtyState>,
     _app_handle: AppHandle<R>,
-) -> Result<PtyHandler, String> {
+) -> Result<u32, String> {
     let _ = term_name;
     let _ = encoding;
     let _ = handle_flow_control;
@@ -77,22 +71,24 @@ async fn spawn<R: Runtime>(
     let child_killer = child.clone_killer();
     let handler = state.session_id.fetch_add(1, Ordering::Relaxed);
 
-    let pair = Arc::new(Session {
-        pair: Mutex::new(pair),
-        child: Mutex::new(child),
-        child_killer: Mutex::new(child_killer),
-        writer: Mutex::new(writer),
-        reader: Mutex::new(reader),
-    });
-    state.sessions.write().await.insert(handler, pair);
+    state.sessions.write().await.insert(
+        handler,
+        Arc::new(PtySession {
+            pair: Mutex::new(pair),
+            child: Mutex::new(child),
+            child_killer: Mutex::new(child_killer),
+            writer: Mutex::new(writer),
+            reader: Mutex::new(reader),
+        }),
+    );
     Ok(handler)
 }
 
 #[tauri::command]
-async fn write(
-    pid: PtyHandler,
+pub async fn pty_write(
+    pid: u32,
     data: String,
-    state: tauri::State<'_, PluginState>,
+    state: tauri::State<'_, PtyState>,
 ) -> Result<(), String> {
     let session = state
         .sessions
@@ -111,7 +107,7 @@ async fn write(
 }
 
 #[tauri::command]
-async fn read(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<Vec<u8>, String> {
+pub async fn pty_read(pid: u32, state: tauri::State<'_, PtyState>) -> Result<Vec<u8>, String> {
     let session = state
         .sessions
         .read()
@@ -119,7 +115,6 @@ async fn read(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<V
         .get(&pid)
         .ok_or("Unavaliable pid")?
         .clone();
-    // Move blocking PTY read off the async worker thread
     tauri::async_runtime::spawn_blocking(move || {
         let mut reader = session.reader.lock().map_err(|e| e.to_string())?;
         let mut buf = vec![0u8; 4096];
@@ -137,11 +132,11 @@ async fn read(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<V
 }
 
 #[tauri::command]
-async fn resize(
-    pid: PtyHandler,
+pub async fn pty_resize(
+    pid: u32,
     cols: u16,
     rows: u16,
-    state: tauri::State<'_, PluginState>,
+    state: tauri::State<'_, PtyState>,
 ) -> Result<(), String> {
     let session = state
         .sessions
@@ -166,7 +161,7 @@ async fn resize(
 }
 
 #[tauri::command]
-async fn kill(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(), String> {
+pub async fn pty_kill(pid: u32, state: tauri::State<'_, PtyState>) -> Result<(), String> {
     let session = state
         .sessions
         .read()
@@ -184,7 +179,7 @@ async fn kill(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<(
 }
 
 #[tauri::command]
-async fn exitstatus(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Result<u32, String> {
+pub async fn pty_exitstatus(pid: u32, state: tauri::State<'_, PtyState>) -> Result<u32, String> {
     let session = state
         .sessions
         .read()
@@ -192,7 +187,6 @@ async fn exitstatus(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Re
         .get(&pid)
         .ok_or("Unavaliable pid")?
         .clone();
-    // Move blocking wait off the async worker thread
     let exit_code = tauri::async_runtime::spawn_blocking(move || {
         session
             .child
@@ -205,16 +199,4 @@ async fn exitstatus(pid: PtyHandler, state: tauri::State<'_, PluginState>) -> Re
     .await
     .map_err(|e| e.to_string())??;
     Ok(exit_code)
-}
-
-pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    Builder::<R>::new("pty")
-        .invoke_handler(tauri::generate_handler![
-            spawn, write, read, resize, kill, exitstatus
-        ])
-        .setup(|app_handle, _api| {
-            app_handle.manage(PluginState::default());
-            Ok(())
-        })
-        .build()
 }

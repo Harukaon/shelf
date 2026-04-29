@@ -8,7 +8,6 @@
     "core:window:allow-minimize",
     "core:window:allow-hide",
     "shell:allow-open",
-    "default",
     "dialog:default"
   ]
 }
