@@ -164,6 +164,9 @@ class App {
   }
 
   private _showQuitDialog() {
+    // Prevent stacking dialogs
+    if (document.querySelector("#confirm-close")) return;
+
     const appWindow = getCurrentWebviewWindow();
     const panel = document.createElement("div");
     panel.className = "settings-panel";
@@ -179,8 +182,14 @@ class App {
     const close = () => { panel.remove(); backdrop.remove(); };
     document.body.appendChild(backdrop);
     document.body.appendChild(panel);
-    panel.querySelector("#confirm-close")!.addEventListener("click", () => { close(); appWindow.destroy(); });
     panel.querySelector("#cancel-close")!.addEventListener("click", close);
+    panel.querySelector("#confirm-close")!.addEventListener("click", () => {
+      // Kill all PTYs before exiting
+      for (const [, tab] of this.tabs.tabsMap) {
+        if (tab.pty) try { tab.pty.kill(); } catch (_) {}
+      }
+      appWindow.close();
+    });
   }
 
   private _passiveTimer: ReturnType<typeof setInterval> | null = null;
