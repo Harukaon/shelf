@@ -48,18 +48,32 @@ export function createTerminalTab(
   try {
     const spawnOpts: Record<string, unknown> = { cols: terminal.cols, rows: terminal.rows };
     if (options?.cwd) spawnOpts.cwd = options.cwd;
+    const cmdBin = options?.command?.bin || options?.shell || "zsh";
+    const cmdArgs = options?.command?.args || [];
     if (options?.command) {
-      pty = spawn(options.command.bin, options.command.args, spawnOpts);
+      pty = spawn(cmdBin, cmdArgs, spawnOpts);
     } else {
-      const shellBin = options?.shell || "zsh";
-      pty = spawn(shellBin, [], spawnOpts);
+      pty = spawn(cmdBin, [], spawnOpts);
     }
-    console.log(`[Terminal] tab ${tabId} pid=${pty.pid} cmd=`, options?.command?.bin || options?.shell || "zsh", options?.command?.args || [], "cwd:", options?.cwd);
+
+    const ptyInit: Promise<number> = (pty as any)._init as Promise<number>;
+    console.log(`[Terminal] tab ${tabId} spawning ${cmdBin} ${cmdArgs.join(" ")} cwd=${options?.cwd}`);
+    ptyInit
+      .then((pid: number) => {
+        console.log(`[Terminal] tab ${tabId} pid=${pid} ok`);
+      })
+      .catch((e: unknown) => {
+        console.error(`[Terminal] tab ${tabId} spawn FAILED:`, e);
+        terminal.clear();
+        terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
+        terminal.writeln("Try closing some tabs or restarting Shelf.");
+      });
 
     pty.onData((data: Uint8Array) => {
       terminal.write(data);
     });
     terminal.onData((data: string) => {
+      console.log(`[Terminal] tab ${tabId} onData key=`, JSON.stringify(data));
       onPtyWrite(tabId, data);
     });
     pty.onExit((exit) => {
