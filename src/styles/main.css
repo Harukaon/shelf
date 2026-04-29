@@ -91,11 +91,24 @@ i[data-lucide] {
 
 .tab-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .tab-item.active { background: var(--tab-active-bg); color: var(--accent); border-color: var(--border); }
-.tab-item .tab-dot-icon { color: var(--green); width: 12px; height: 12px; flex-shrink: 0; }
-.tab-item.active .tab-dot-icon { color: var(--accent); }
-.tab-item.active .tab-dot-icon svg circle:first-child { fill: currentColor; }
-.session-item.focused .session-icon svg circle:first-child { fill: currentColor; }
-.pinned-item.focused .session-icon svg circle:first-child { fill: currentColor; }
+.tab-item .tab-dot-icon,
+.tab-item .tab-dot-icon svg { display: none; }
+.tab-item .dot-icon { 
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 1.5px solid var(--green); flex-shrink: 0;
+}
+.tab-item .dot-icon.active {
+  background: var(--accent); border-color: var(--accent);
+}
+
+.session-item .session-icon { display: none; }
+.session-item .dot-icon {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 1.5px solid var(--text-muted); flex-shrink: 0;
+}
+.session-item .dot-icon.focused {
+  background: var(--accent); border-color: var(--accent);
+}
 .tab-item .tab-title { overflow: hidden; text-overflow: ellipsis; }
 .tab-item .tab-close { line-height: 1; border-radius: 3px; opacity: 0.5; flex-shrink: 0; display: flex; align-items: center; }
 .tab-item .tab-close:hover { opacity: 1; background: var(--red); color: var(--bg-primary); }

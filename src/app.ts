@@ -422,7 +422,7 @@ class App {
           const item = document.createElement("div");
           item.className = `session-item pinned-item${isActive ? " active" : ""}${isFocused ? " focused" : ""}`;
           item.innerHTML = `
-            <i data-lucide="${isFocused ? "disc" : "circle"}" class="session-icon"></i>
+            <span class="dot-icon${isFocused ? " focused" : ""}"></span>
             <div class="pinned-info">
               <span class="session-title">${escapeHtml(session.display_title)}</span>
               <span class="pinned-path">${escapeHtml(ws.name)}</span>
@@ -519,7 +519,7 @@ class App {
           item.className = `session-item${isActive ? " active" : ""}${isFocused ? " focused" : ""}`;
           const iconName = isFocused ? "disc" : "circle";
           item.innerHTML = `
-            <i data-lucide="${iconName}" class="session-icon"></i>
+            <span class="dot-icon${isFocused ? " focused" : ""}"></span>
             <span class="session-title" title="${escapeHtml(session.display_title)}">${escapeHtml(session.display_title)}</span>
             <span class="session-date">${formatDate(session.started_at)}</span>`;
           item.addEventListener("click", (e) => {
@@ -568,7 +568,7 @@ class App {
       tabEl.className = `tab-item${isTabActive ? " active" : ""}`;
       const closeHtml = tab.closable ? '<span class="tab-close" title="Close"><i data-lucide="x"></i></span>' : "";
       tabEl.innerHTML = `
-        <i data-lucide="${isTabActive ? "disc" : "circle"}" class="tab-dot-icon"></i>
+        <span class="dot-icon${isTabActive ? " active" : ""}"></span>
         <span class="tab-title">${escapeHtml(tab.title)}</span>
         ${closeHtml}`;
       if (tab.closable) {
