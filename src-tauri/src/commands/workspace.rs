@@ -16,11 +16,13 @@ fn load_config() -> ShelfConfig {
         serde_json::from_str(&content).unwrap_or(ShelfConfig {
             workspaces: Vec::new(),
             shell: "zsh".to_string(),
+            language: "en".to_string(),
         })
     } else {
         ShelfConfig {
             workspaces: Vec::new(),
             shell: "zsh".to_string(),
+            language: "en".to_string(),
         }
     }
 }
@@ -88,7 +90,7 @@ pub fn list_workspaces() -> Result<Vec<serde_json::Value>, String> {
 #[tauri::command]
 pub fn get_settings() -> Result<serde_json::Value, String> {
     let config = load_config();
-    Ok(serde_json::json!({ "shell": config.shell }))
+    Ok(serde_json::json!({ "shell": config.shell, "language": config.language }))
 }
 
 #[tauri::command]
@@ -101,6 +103,9 @@ pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
     };
     if let Some(shell) = payload.get("shell").and_then(|s| s.as_str()) {
         config.shell = shell.to_string();
+    }
+    if let Some(lang) = payload.get("language").and_then(|s| s.as_str()) {
+        config.language = lang.to_string();
     }
     save_config(&config)
 }

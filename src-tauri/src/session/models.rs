@@ -24,9 +24,12 @@ pub struct ShelfConfig {
     pub workspaces: Vec<Workspace>,
     #[serde(default = "default_shell")]
     pub shell: String,
+    #[serde(default = "default_lang")]
+    pub language: String,
 }
 
 fn default_shell() -> String { "zsh".to_string() }
+fn default_lang() -> String { "en".to_string() }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileEntry {

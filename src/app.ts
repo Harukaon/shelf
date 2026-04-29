@@ -8,6 +8,7 @@ import { WorkspaceManager } from "./modules/workspace";
 import { createTerminalTab, writeToPty } from "./modules/terminal";
 import { renderFileTree, clearFileCache } from "./modules/files";
 import { setupDragDrop, setupPanelResize } from "./modules/dragdrop";
+import { t, setLang, getLang } from "./i18n";
 import { showTerminalMenu } from "./modules/pickers";
 
 const START_TAB_ID = "__start__";
@@ -90,21 +91,19 @@ class App {
     container.innerHTML = `
       <div class="start-page-content">
         <div class="start-page-icon">🖥</div>
-        <h2>Shelf</h2>
-        <p>Select a workspace folder and click a session to start.</p>
+        <h2>${t("home.title")}</h2>
+        <p>${t("home.subtitle")}</p>
         <div class="start-page-hints">
-          <div><kbd>+ Add Workspace</kbd> to add a project folder</div>
-          <div>Click a session to open it in a terminal tab</div>
-          <div>Press <kbd>+</kbd> in tab bar for a blank terminal</div>
+          <div><kbd>+ Add Workspace</kbd> ${t("home.hint1")}</div>
+          <div>${t("home.hint2")}</div>
+          <div>Press <kbd>+</kbd> ${t("home.hint3")}</div>
         </div>
-        <div class="start-page-warning">
-          Tip: Avoid using <code>/resume</code> or <code>claude --resume</code> directly in the terminal to switch sessions, as this will cause tab display to go out of sync. Use the left panel instead.
-        </div>
+        <div class="start-page-warning">${t("home.warning")}</div>
       </div>`;
     this.terminalContainer.appendChild(container);
 
     const tab: TabInfo = {
-      id: START_TAB_ID, title: "Home", closable: false,
+      id: START_TAB_ID, title: t("tab.home"), closable: false,
       terminal: null as unknown as Terminal,
       fitAddon: null as unknown as FitAddon,
       containerEl: container,
@@ -119,13 +118,14 @@ class App {
     this.tabs.switchToStartPage(START_TAB_ID);
     this.selectedWorkspace = null;
     this.ws.selectedWorkspace = null;
-    this.fileTreeEl.innerHTML = '<div class="tree-empty">Select a workspace</div>';
+    this.fileTreeEl.innerHTML = `<div class="tree-empty">${t("session.empty")}</div>`;
   }
 
   private async _loadSettings() {
     try {
       const s = await tauriInvoke<any>("get_settings");
       if (s?.shell) this.shellSetting = s.shell;
+      if (s?.language) { setLang(s.language); }
     } catch (_) { /* use default */ }
   }
 
@@ -133,11 +133,17 @@ class App {
     const panel = document.createElement("div");
     panel.className = "settings-panel";
     panel.innerHTML = `
-      <div class="settings-title">Settings</div>
-      <div class="settings-row"><label>Default Shell</label><select id="settings-shell"></select></div>
+      <div class="settings-title">${t("settings.title")}</div>
+      <div class="settings-row"><label>${t("settings.shell")}</label><select id="settings-shell"></select></div>
+      <div class="settings-row"><label>${t("settings.language")}</label>
+        <select id="settings-lang">
+          <option value="en">English</option>
+          <option value="zh">中文</option>
+        </select>
+      </div>
       <div class="settings-actions">
-        <button id="settings-save">Save</button>
-        <button id="settings-cancel">Cancel</button>
+        <button id="settings-save">${t("settings.save")}</button>
+        <button id="settings-cancel">${t("settings.cancel")}</button>
       </div>`;
     const backdrop = document.createElement("div");
     backdrop.className = "picker-backdrop";
@@ -156,12 +162,19 @@ class App {
         if (s === this.shellSetting) opt.selected = true;
         shellSel.appendChild(opt);
       }
+      const langSel = panel.querySelector("#settings-lang") as HTMLSelectElement;
+      langSel.value = getLang();
     }).catch(() => {});
 
     panel.querySelector("#settings-save")!.addEventListener("click", async () => {
       this.shellSetting = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;
-      try { await tauriInvoke("save_settings", { shell: this.shellSetting }); } catch (_) {}
+      const newLang = (panel.querySelector("#settings-lang") as HTMLSelectElement).value;
+      setLang(newLang);
+      try { await tauriInvoke("save_settings", { shell: this.shellSetting, language: newLang }); } catch (_) {}
       close();
+      this._renderWorkspaces();
+      this._renderTabs();
+      this._createStartTab();
     });
     panel.querySelector("#settings-cancel")!.addEventListener("click", close);
   }
@@ -172,7 +185,7 @@ class App {
 
   private _newClaudeSession(wsPath: string) {
     const tabId = crypto.randomUUID();
-    const tab = createTerminalTab(tabId, "Claude (new)", this.terminalContainer,
+    const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
       { cwd: wsPath, workspacePath: wsPath, shell: this.shellSetting },
     );
@@ -196,7 +209,7 @@ class App {
     const tabId = crypto.randomUUID();
     let wsPath: string | undefined;
     if (cwd) wsPath = this.ws.workspaces.find(w => cwd === w.path || cwd.startsWith(w.path + "/"))?.path;
-    const tab = createTerminalTab(tabId, "Terminal", this.terminalContainer,
+    const tab = createTerminalTab(tabId, t("tab.terminal"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
       { cwd, workspacePath: wsPath, shell: this.shellSetting },
     );
@@ -261,7 +274,7 @@ class App {
       await renderFileTree(this.fileTreeEl, files, this.expandedDirs, this.loadedDirs);
     } catch (e) {
       console.error("List files:", e);
-      this.fileTreeEl.innerHTML = '<div class="tree-empty">Failed to load files</div>';
+      this.fileTreeEl.innerHTML = `<div class="tree-empty">${t("file.failed")}</div>`;
     }
   }
 
@@ -283,8 +296,8 @@ class App {
         <i data-lucide="${isExpanded ? "folder-open" : "folder"}"></i>
         <span class="ws-name">${escapeHtml(ws.name)}</span>
         <span class="ws-actions">
-          <button class="ws-new-btn" title="New session">+</button>
-          <button class="ws-remove-btn" title="Remove workspace"><i data-lucide="trash-2"></i></button>
+          <button class="ws-new-btn" title="${t("workspace.new")}">+</button>
+          <button class="ws-remove-btn" title="${t("workspace.remove")}"><i data-lucide="trash-2"></i></button>
         </span>`;
       header.querySelector(".ws-new-btn")!.addEventListener("click", (e) => {
         e.stopPropagation();

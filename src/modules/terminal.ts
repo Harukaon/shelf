@@ -2,6 +2,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { spawn, IPty } from "tauri-pty";
 import { TabInfo } from "../types";
+import { t } from "../i18n";
 
 let TERMINAL_THEME = {
   background: "#1e1e2e",
@@ -51,10 +52,10 @@ export function createTerminalTab(
     pty = spawn(shellBin, [], spawnOpts);
     pty.onData((data: Uint8Array) => terminal.write(data));
     terminal.onData((data: string) => onPtyWrite(tabId, data));
-    pty.onExit(() => terminal.write("\r\n[Process exited]\r\n"));
+    pty.onExit(() => terminal.write(`\r\n${t("process.exited")}\r\n`));
   } catch (e) {
     console.error("Spawn PTY:", e);
-    terminal.write(`\r\n[Failed to start shell: ${e}]\r\n`);
+    terminal.write(`\r\n${t("shell.failed", String(e))}\r\n`);
   }
 
   const wrapper = document.createElement("div");
