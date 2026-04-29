@@ -177,7 +177,7 @@ class App {
       this.shellSetting = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;
       const newLang = (panel.querySelector("#settings-lang") as HTMLSelectElement).value;
       setLang(newLang);
-      try { await tauriInvoke("save_settings", { shell: this.shellSetting, language: newLang }); } catch (e) { console.error("save_settings failed:", e); }
+      try { await tauriInvoke("save_settings", { settings: { shell: this.shellSetting, language: newLang } }); } catch (e) { console.error("save_settings failed:", e); }
       close();
       this._updateStaticTexts();
       this._createStartTab();
