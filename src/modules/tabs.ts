@@ -29,10 +29,9 @@ export class TabManager {
 
   activateTab(tabId: string) {
     if (this.activeTabId === tabId) return;
-    // Blur & deactivate previous terminal
+    this.tabs.forEach((t) => { t.containerEl.style.display = "none"; t.active = false; });
     const prev = this.tabs.get(this.activeTabId || "");
-    if (prev) { prev.terminal.blur(); prev.active = false; }
-    this.tabs.forEach((t) => { t.containerEl.style.display = "none"; });
+    if (prev?.terminal) try { prev.terminal.blur(); } catch (_) {}
     const tab = this.tabs.get(tabId);
     if (tab) {
       tab.containerEl.style.display = "block";
