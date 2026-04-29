@@ -97,9 +97,9 @@ class App {
         this._showQuitDialog();
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "w") {
-        // Cmd+W closes window but should not quit - prevent default
         e.preventDefault();
         e.stopPropagation();
+        getCurrentWebviewWindow().minimize();
       }
     });
     for (const ws of this.ws.workspaces) { await this.ws.scanSessions(ws.path); }

@@ -5,6 +5,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-close",
+    "core:window:allow-minimize",
     "shell:allow-open",
     "pty:default",
     "dialog:default"
