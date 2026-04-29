@@ -24,6 +24,7 @@ pub fn run() {
             commands::workspace::pin_session,
             commands::workspace::unpin_session,
             commands::workspace::get_pinned,
+            commands::workspace::exit_app,
             commands::sessions::scan_sessions,
             commands::sessions::create_session,
             commands::sessions::rename_session,

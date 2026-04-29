@@ -184,11 +184,11 @@ class App {
     document.body.appendChild(panel);
     panel.querySelector("#cancel-close")!.addEventListener("click", close);
     panel.querySelector("#confirm-close")!.addEventListener("click", () => {
-      // Kill all PTYs before exiting
+      close();
       for (const [, tab] of this.tabs.tabsMap) {
         if (tab.pty) try { tab.pty.kill(); } catch (_) {}
       }
-      appWindow.close();
+      tauriInvoke("exit_app");
     });
   }
 
@@ -342,7 +342,7 @@ class App {
     const tabId = crypto.randomUUID();
     const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { cwd: wsPath, workspacePath: wsPath, command: { bin: "claude", args: [] } },
+      { cwd: wsPath, workspacePath: wsPath, command: { bin: "zsh", args: ["-l", "-c", "claude"] } },
     );
     this.tabs.addTab(tab);
     this.pendingNewSessions.add(wsPath);
@@ -399,7 +399,7 @@ class App {
     const cwd = session.cwd || wsPath;
     const tab = createTerminalTab(tabId, session.display_title, this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { sessionId: session.id, cwd, workspacePath: wsPath, command: { bin: "claude", args: ["--resume", session.id] } },
+      { sessionId: session.id, cwd, workspacePath: wsPath, command: { bin: "zsh", args: ["-l", "-c", `claude --resume ${session.id}`] } },
     );
     this.tabs.addTab(tab);
     this.activeSessionIds.add(session.id);

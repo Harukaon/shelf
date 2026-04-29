@@ -152,3 +152,8 @@ pub fn get_pinned() -> Result<Vec<String>, String> {
     let config = load_config();
     Ok(config.pinned)
 }
+
+#[tauri::command]
+pub fn exit_app() {
+    std::process::exit(0);
+}
