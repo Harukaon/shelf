@@ -22,6 +22,7 @@ class App {
   activeSessionIds = new Set<string>();
   focusedSessionId: string | null = null;
   shellSetting = "zsh";
+  pendingNewSessions = new Set<string>();
   expandedDirs = new Set<string>();
   loadedDirs = new Set<string>();
   selectedWorkspace: string | null = null;
@@ -233,22 +234,33 @@ class App {
   }
 
   private async _newClaudeSession(wsPath: string) {
-    try {
-      const result = await tauriInvoke<any>("create_session", { workspacePath: wsPath });
-      const sessionId = result.sessionId as string;
-      const tabId = crypto.randomUUID();
-      const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
-        (id, data) => this._writePty(id, data),
-        { sessionId, cwd: wsPath, workspacePath: wsPath, shell: this.shellSetting },
-      );
-      this.tabs.addTab(tab);
-      setTimeout(() => writeToPty(tab, `claude --resume ${sessionId}\n`), 600);
-      this.activeSessionIds.add(sessionId);
-      this.focusedSessionId = sessionId;
-      // Refresh session list to show the new session
-      await this.ws.scanSessions(wsPath);
-      this._renderWorkspaces();
-    } catch (e) { console.error("Create session failed:", e); }
+    const tabId = crypto.randomUUID();
+    const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
+      (id, data) => this._writePty(id, data),
+      { cwd: wsPath, workspacePath: wsPath, command: { bin: "claude", args: [] } },
+    );
+    this.tabs.addTab(tab);
+    this.pendingNewSessions.add(wsPath);
+    this._startPollingNewSessions(wsPath);
+  }
+
+  private _startPollingNewSessions(wsPath: string, attempt = 0) {
+    if (!this.pendingNewSessions.has(wsPath)) return;
+    if (attempt > 24) { this.pendingNewSessions.delete(wsPath); return; } // 2 min timeout
+    setTimeout(async () => {
+      if (!this.pendingNewSessions.has(wsPath)) return;
+      try {
+        const sessions = await tauriInvoke<Session[]>("scan_sessions", { workspacePath: wsPath });
+        const old = this.ws.sessions.get(wsPath) || [];
+        if (sessions.length > old.length) {
+          this.ws.sessions.set(wsPath, sessions);
+          this.pendingNewSessions.delete(wsPath);
+          this._renderWorkspaces();
+          return;
+        }
+      } catch (_) {}
+      this._startPollingNewSessions(wsPath, attempt + 1);
+    }, 5000);
   }
 
   private async _refreshAllSessions() {
@@ -282,10 +294,9 @@ class App {
     const cwd = session.cwd || wsPath;
     const tab = createTerminalTab(tabId, session.display_title, this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { sessionId: session.id, cwd, workspacePath: wsPath, shell: this.shellSetting },
+      { sessionId: session.id, cwd, workspacePath: wsPath, command: { bin: "claude", args: ["--resume", session.id] } },
     );
     this.tabs.addTab(tab);
-    setTimeout(() => writeToPty(tab, `claude --resume ${session.id}\n`), 600);
     this.activeSessionIds.add(session.id);
     this.focusedSessionId = session.id;
   }

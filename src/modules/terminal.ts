@@ -32,7 +32,7 @@ export function createTerminalTab(
   title: string,
   terminalContainer: HTMLElement,
   onPtyWrite: (tabId: string, data: string) => void,
-  options?: { sessionId?: string; cwd?: string; workspacePath?: string; shell?: string },
+  options?: { sessionId?: string; cwd?: string; workspacePath?: string; shell?: string; command?: { bin: string; args: string[] } },
 ): TabInfo {
   const terminal = new Terminal({
     cursorBlink: true,
@@ -48,8 +48,13 @@ export function createTerminalTab(
   try {
     const spawnOpts: Record<string, unknown> = { cols: terminal.cols, rows: terminal.rows };
     if (options?.cwd) spawnOpts.cwd = options.cwd;
-    const shellBin = options?.shell || "zsh";
-    pty = spawn(shellBin, [], spawnOpts);
+    if (options?.command) {
+      // Spawn command directly (no shell — avoids history pollution)
+      pty = spawn(options.command.bin, options.command.args, spawnOpts);
+    } else {
+      const shellBin = options?.shell || "zsh";
+      pty = spawn(shellBin, [], spawnOpts);
+    }
     pty.onData((data: Uint8Array) => terminal.write(data));
     terminal.onData((data: string) => onPtyWrite(tabId, data));
     pty.onExit(() => terminal.write(`\r\n${t("process.exited")}\r\n`));
