@@ -10,6 +10,8 @@ pub struct Session {
     pub first_prompt: Option<String>,
     pub message_count: usize,
     pub started_at: String,
+    pub updated_at: String,
+    pub file_path: String,
     pub version: String,
 }
 

@@ -12,6 +12,7 @@ export class WorkspaceManager {
   constructor(
     private renderWorkspaces: () => void,
     private onSelectedChange?: (path: string | null) => void,
+    private scanWorkspace?: (path: string) => Promise<void>,
   ) {}
 
   async load() {
@@ -60,7 +61,10 @@ export class WorkspaceManager {
   async select(newPath: string) {
     this.selectedWorkspace = newPath;
     this.expandedWorkspaces.add(newPath);
-    if (!this.sessions.has(newPath)) await this.scanSessions(newPath);
+    if (!this.sessions.has(newPath)) {
+      if (this.scanWorkspace) await this.scanWorkspace(newPath);
+      else await this.scanSessions(newPath);
+    }
     this.renderWorkspaces();
     if (this.onSelectedChange) this.onSelectedChange(newPath);
   }

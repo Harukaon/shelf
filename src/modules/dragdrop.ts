@@ -1,9 +1,70 @@
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import type { DragDropEvent } from "@tauri-apps/api/webview";
+
+type DropZone = "terminal" | "workspace";
+
+function elementAtPhysicalPosition(position: { x: number; y: number }): Element | null {
+  const scale = window.devicePixelRatio || 1;
+  return document.elementFromPoint(position.x / scale, position.y / scale);
+}
+
+function isInTerminal(el: Element | null, terminalContainer: HTMLElement): boolean {
+  return !!el && (
+    terminalContainer.contains(el) ||
+    !!el.closest(".terminal-wrapper") ||
+    !!el.closest(".xterm") ||
+    !!el.closest(".xterm-screen")
+  );
+}
+
+function isInWorkspaceList(el: Element | null, workspaceListEl: HTMLElement): boolean {
+  return !!el && workspaceListEl.contains(el);
+}
+
+function getDropZone(
+  el: Element | null,
+  terminalContainer: HTMLElement,
+  workspaceListEl: HTMLElement,
+): DropZone | null {
+  if (isInTerminal(el, terminalContainer)) return "terminal";
+  if (isInWorkspaceList(el, workspaceListEl)) return "workspace";
+  return null;
+}
+
+function clearDropHighlights(terminalContainer: HTMLElement, workspaceListEl: HTMLElement) {
+  terminalContainer.classList.remove("drag-target");
+  workspaceListEl.classList.remove("drag-over");
+}
+
 export function setupDragDrop(
   terminalContainer: HTMLElement,
   workspaceListEl: HTMLElement,
   onTerminalDrop: (path: string) => void,
   onWorkspaceDrop: (path: string) => void,
 ) {
+  let lastDrop: { zone: DropZone; path: string; at: number } | null = null;
+
+  function dispatchDrop(zone: DropZone | null, path: string | undefined) {
+    if (!zone || !path) return;
+
+    const now = Date.now();
+    if (lastDrop && lastDrop.zone === zone && lastDrop.path === path && now - lastDrop.at < 500) {
+      return;
+    }
+    lastDrop = { zone, path, at: now };
+
+    if (zone === "terminal") {
+      onTerminalDrop(path);
+    } else {
+      onWorkspaceDrop(path);
+    }
+  }
+
+  function updateDropHighlight(zone: DropZone | null) {
+    terminalContainer.classList.toggle("drag-target", zone === "terminal");
+    workspaceListEl.classList.toggle("drag-over", zone === "workspace");
+  }
+
   // === Mouse-based drag from file tree → terminal ===
   let dragPath: string | null = null;
   let dragOverlay: HTMLElement | null = null;
@@ -32,13 +93,8 @@ export function setupDragDrop(
     dragOverlay.style.top = `${e.clientY - dragOverlay.offsetHeight / 2}px`;
 
     const elUnder = document.elementFromPoint(e.clientX, e.clientY);
-    const inTerm = elUnder && (
-      terminalContainer.contains(elUnder) ||
-      !!elUnder.closest(".terminal-wrapper") ||
-      !!elUnder.closest(".xterm") ||
-      !!elUnder.closest(".xterm-screen")
-    );
-    terminalContainer.classList.toggle("drag-target", !!inTerm);
+    const inTerm = isInTerminal(elUnder, terminalContainer);
+    terminalContainer.classList.toggle("drag-target", inTerm);
   });
 
   document.addEventListener("mouseup", (e: MouseEvent) => {
@@ -50,16 +106,42 @@ export function setupDragDrop(
     if (!path) return;
 
     const elUnder = document.elementFromPoint(e.clientX, e.clientY);
-    const inTerm = elUnder && (
-      terminalContainer.contains(elUnder) ||
-      !!elUnder.closest(".terminal-wrapper") ||
-      !!elUnder.closest(".xterm") ||
-      !!elUnder.closest(".xterm-screen")
-    );
-    if (inTerm) onTerminalDrop(path);
+    if (isInTerminal(elUnder, terminalContainer)) onTerminalDrop(path);
   });
 
-  // === Finder drag (native HTML5 drop) → terminal ===
+  // === Finder/native file drag ===
+  // Tauri delivers absolute filesystem paths through webview drag-drop events.
+  // Browser DataTransfer is kept below only as a fallback for text/file drops.
+  try {
+    getCurrentWebview().onDragDropEvent((event) => {
+      const payload: DragDropEvent = event.payload;
+
+      if (payload.type === "leave") {
+        clearDropHighlights(terminalContainer, workspaceListEl);
+        return;
+      }
+
+      const zone = getDropZone(
+        elementAtPhysicalPosition(payload.position),
+        terminalContainer,
+        workspaceListEl,
+      );
+
+      if (payload.type === "enter" || payload.type === "over") {
+        updateDropHighlight(zone);
+        return;
+      }
+
+      clearDropHighlights(terminalContainer, workspaceListEl);
+      dispatchDrop(zone, payload.paths[0]);
+    }).catch((error) => {
+      console.warn("[DragDrop] Native file drop unavailable:", error);
+    });
+  } catch (error) {
+    console.warn("[DragDrop] Native file drop unavailable:", error);
+  }
+
+  // === HTML5 drop fallback → terminal ===
   // Use capture phase to intercept before xterm.js
   terminalContainer.addEventListener("dragover", (e: DragEvent) => {
     e.preventDefault();
@@ -76,21 +158,22 @@ export function setupDragDrop(
   terminalContainer.addEventListener("drop", (e: DragEvent) => {
     e.preventDefault();
     terminalContainer.classList.remove("drag-target");
-    // Handle Finder files (native drop)
+    // Some environments expose a non-standard absolute path here, but Tauri's
+    // native drag-drop event is the primary source for Finder paths.
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
       const file = files[0] as unknown as { path?: string };
       if (file?.path) {
-        onTerminalDrop(file.path);
+        dispatchDrop("terminal", file.path);
         return;
       }
     }
     // Handle custom text data (from HTML5 draggable elsewhere)
     const textPath = e.dataTransfer?.getData("text/plain");
-    if (textPath) onTerminalDrop(textPath);
+    dispatchDrop("terminal", textPath);
   }, true);
 
-  // Workspace panel: Finder drop to add workspace
+  // Workspace panel: HTML5 fallback to add workspace
   workspaceListEl.addEventListener("dragover", (e: DragEvent) => {
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
@@ -103,7 +186,7 @@ export function setupDragDrop(
     const files = e.dataTransfer?.files;
     if (files?.[0]) {
       const file = files[0] as unknown as { path?: string };
-      if (file?.path) onWorkspaceDrop(file.path);
+      dispatchDrop("workspace", file?.path);
     }
   });
 }

@@ -42,6 +42,7 @@ class Pty implements IPty {
   private _onDataListeners: Array<(e: Uint8Array) => void> = [];
   private _onExitListeners: Array<(e: { exitCode: number; signal?: number }) => void> = [];
   private _exitted = false;
+  private _closed = false;
   private _init: Promise<number>;
 
   onData = (listener: (e: Uint8Array) => void): IDisposable => {
@@ -72,8 +73,8 @@ class Pty implements IPty {
       file,
       args: args ?? [],
       termName: opt.name ?? "Terminal",
-      cols: opt.cols ?? null,
-      rows: opt.rows ?? null,
+      cols: this.cols,
+      rows: this.rows,
       cwd: opt.cwd ?? null,
       env: opt.env ?? {},
       encoding: opt.encoding ?? null,
@@ -82,7 +83,7 @@ class Pty implements IPty {
       flowControlResume: opt.flowControlResume ?? null,
     };
 
-    this._init = invoke<number>("ptySpawn", invokeArgs).then((pid) => {
+    this._init = invoke<number>("pty_spawn", invokeArgs).then((pid) => {
       this.pid = pid;
       this.readLoop();
       this.waitLoop();
@@ -94,7 +95,7 @@ class Pty implements IPty {
     this.cols = cols;
     this.rows = rows;
     this._init.then(() =>
-      invoke("ptyResize", { pid: this.pid, cols, rows }).catch((e) =>
+      invoke("pty_resize", { pid: this.pid, cols, rows }).catch((e) =>
         console.error("Resize error:", e)
       )
     );
@@ -105,22 +106,29 @@ class Pty implements IPty {
   }
 
   write(data: string): void {
+    if (this._closed) return;
     this._init.then(() =>
-      invoke("ptyWrite", { pid: this.pid, data }).catch((e) =>
+      invoke("pty_write", { pid: this.pid, data }).catch((e) =>
         console.error("Write error:", e)
       )
-    );
+    ).catch(() => {});
   }
 
   kill(): void {
-    this._init.then(() => invoke("ptyKill", { pid: this.pid }));
+    this._closed = true;
+    this._onDataListeners.length = 0;
+    this._onExitListeners.length = 0;
+    this._init
+      .then(() => invoke("pty_kill", { pid: this.pid }))
+      .catch(() => {});
   }
 
   private async readLoop() {
     await this._init;
-    for (;;) {
+    while (!this._closed) {
       try {
-        const data: Uint8Array = await invoke("ptyRead", { pid: this.pid });
+        const data: Uint8Array = await invoke("pty_read", { pid: this.pid });
+        if (this._closed) return;
         for (const fn of this._onDataListeners) fn(data);
       } catch (e) {
         if (typeof e === "string" && e.includes("EOF")) return;
@@ -131,9 +139,10 @@ class Pty implements IPty {
   }
 
   private async waitLoop() {
-    if (this._exitted) return;
+    if (this._exitted || this._closed) return;
     try {
-      const exitCode: number = await invoke("ptyExitstatus", { pid: this.pid });
+      const exitCode: number = await invoke("pty_exitstatus", { pid: this.pid });
+      if (this._closed) return;
       this._exitted = true;
       for (const fn of this._onExitListeners) fn({ exitCode });
     } catch (e) {

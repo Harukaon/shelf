@@ -17,6 +17,19 @@ import Sortable from "sortablejs";
 
 const START_TAB_ID = "__start__";
 const SESSION_PAGE_SIZE = 6;
+const SESSION_POLL_INTERVAL_MS = 60_000;
+const CLAUDE_NEW_POLL_INTERVAL_MS = 5_000;
+const CLAUDE_NEW_DISCOVERY_TIMEOUT_MS = 120_000;
+const CLAUDE_NEW_STABILIZE_MS = 45_000;
+
+type PendingClaudeTab = {
+  workspacePath: string;
+  baselineIds: Set<string>;
+  startedAt: number;
+  linkedSessionId?: string;
+  stableUntil?: number;
+  timer?: ReturnType<typeof setTimeout>;
+};
 
 class App {
   tabs!: TabManager;
@@ -26,7 +39,8 @@ class App {
   shellSetting = "zsh";
   claudePath = "claude";
   pinnedIds = new Set<string>();
-  pendingNewSessions = new Set<string>();
+  pendingClaudeTabs = new Map<string, PendingClaudeTab>();
+  sessionScanSeq = new Map<string, number>();
   expandedDirs = new Set<string>();
   loadedDirs = new Set<string>();
   selectedWorkspace: string | null = null;
@@ -59,6 +73,7 @@ class App {
     this.ws = new WorkspaceManager(
       () => this._renderWorkspaces(),
       (path) => { if (path) this._onWorkspaceSelected(path); },
+      async (path) => { await this._refreshWorkspaceSessions(path, "manual"); },
     );
 
     this.tabAddBtn.addEventListener("click", () => this._onTabAdd());
@@ -104,7 +119,7 @@ class App {
         getCurrentWebviewWindow().hide();
       }
     });
-    for (const ws of this.ws.workspaces) { await this.ws.scanSessions(ws.path); }
+    for (const ws of this.ws.workspaces) { await this._refreshWorkspaceSessions(ws.path, "init"); }
     this._renderWorkspaces();
     this._startPassivePolling();
   }
@@ -214,15 +229,93 @@ class App {
     if (this._passiveTimer) clearInterval(this._passiveTimer);
     this._passiveTimer = setInterval(() => {
       for (const ws of this.ws.workspaces) {
-        tauriInvoke<Session[]>("scan_sessions", { workspacePath: ws.path }).then(sessions => {
-          const old = this.ws.sessions.get(ws.path) || [];
-          if (sessions.length !== old.length) {
-            this.ws.sessions.set(ws.path, sessions);
-            this._renderWorkspaces();
-          }
-        }).catch(() => {});
+        this._refreshWorkspaceSessions(ws.path, "passive").catch(() => {});
       }
-    }, 60_000);
+    }, SESSION_POLL_INTERVAL_MS);
+  }
+
+  private async _refreshWorkspaceSessions(
+    workspacePath: string,
+    reason: "init" | "passive" | "manual" | "new-claude" | "rename" | "delete",
+  ): Promise<{ sessions: Session[]; changed: boolean }> {
+    const seq = (this.sessionScanSeq.get(workspacePath) || 0) + 1;
+    this.sessionScanSeq.set(workspacePath, seq);
+    const sessions = await tauriInvoke<Session[]>("scan_sessions", { workspacePath });
+    if (this.sessionScanSeq.get(workspacePath) !== seq) {
+      return { sessions: this.ws.sessions.get(workspacePath) || [], changed: false };
+    }
+    const changed = this._applySessionSnapshot(workspacePath, sessions, reason);
+    return { sessions, changed };
+  }
+
+  private _applySessionSnapshot(
+    workspacePath: string,
+    sessions: Session[],
+    _reason: string,
+  ): boolean {
+    const oldSessions = this.ws.sessions.get(workspacePath) || [];
+    const changed = !this._sessionListsEquivalent(oldSessions, sessions);
+    if (!changed) return false;
+
+    this.ws.sessions.set(workspacePath, sessions);
+    this._syncOpenTabsWithSessions(workspacePath, sessions);
+    this._syncActiveSessionIds();
+    this._syncFocusedSessionId();
+    this._renderTabs();
+    this._renderWorkspaces();
+    return true;
+  }
+
+  private _sessionListsEquivalent(a: Session[], b: Session[]): boolean {
+    if (a.length !== b.length) return false;
+    const bById = new Map(b.map((session) => [session.id, session]));
+    for (const oldSession of a) {
+      const nextSession = bById.get(oldSession.id);
+      if (!nextSession || this._sessionFingerprint(oldSession) !== this._sessionFingerprint(nextSession)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private _sessionFingerprint(session: Session): string {
+    return [
+      session.id,
+      session.display_title,
+      session.custom_title || "",
+      session.ai_title || "",
+      session.first_prompt || "",
+      session.message_count,
+      session.started_at,
+      session.updated_at,
+      session.file_path,
+      session.version,
+    ].join("\u001f");
+  }
+
+  private _syncOpenTabsWithSessions(workspacePath: string, sessions: Session[]) {
+    const byId = new Map(sessions.map((session) => [session.id, session]));
+
+    for (const tab of this.tabs.tabsMap.values()) {
+      if (!tab.sessionId || tab.workspacePath !== workspacePath) continue;
+      const session = byId.get(tab.sessionId);
+      if (!session) continue;
+      if (tab.title !== session.display_title) {
+        tab.title = session.display_title;
+      }
+    }
+  }
+
+  private _syncActiveSessionIds() {
+    this.activeSessionIds.clear();
+    for (const tab of this.tabs.tabsMap.values()) {
+      if (tab.sessionId) this.activeSessionIds.add(tab.sessionId);
+    }
+  }
+
+  private _syncFocusedSessionId() {
+    const activeTab = this.tabs.getActiveTab();
+    this.focusedSessionId = activeTab?.sessionId || null;
   }
 
   private _showSettings() {
@@ -310,8 +403,7 @@ class App {
         console.log("[Shelf] calling rename_session command...");
         await tauriInvoke("rename_session", { sessionId: session.id, newTitle: newName });
         console.log("[Shelf] rename_session OK, refreshing...");
-        for (const ws of this.ws.workspaces) await this.ws.scanSessions(ws.path);
-        this._renderWorkspaces();
+        for (const ws of this.ws.workspaces) await this._refreshWorkspaceSessions(ws.path, "rename");
       } catch (e) { console.error("Rename failed:", e); }
       close();
     };
@@ -327,8 +419,7 @@ class App {
       for (const [id, tab] of this.tabs.tabsMap) {
         if (tab.sessionId === session.id) this.tabs.closeTab(id);
       }
-      await this.ws.scanSessions(wsPath);
-      this._renderWorkspaces();
+      await this._refreshWorkspaceSessions(wsPath, "delete");
       this._showToast(t("toast.deleted"));
     } catch (e) { console.error("Delete failed:", e); }
   }
@@ -355,44 +446,146 @@ class App {
   }
 
   private async _newClaudeSession(wsPath: string) {
+    let baselineSessions = this.ws.sessions.get(wsPath) || [];
+    try {
+      const result = await this._refreshWorkspaceSessions(wsPath, "new-claude");
+      baselineSessions = result.sessions;
+    } catch (_) {
+      /* keep existing cache as best-effort baseline */
+    }
+    const baselineIds = new Set(baselineSessions.map((session) => session.id));
     const tabId = crypto.randomUUID();
     const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
       { cwd: wsPath, workspacePath: wsPath, command: { bin: this.claudePath, args: [] } },
     );
     this.tabs.addTab(tab);
-    this.pendingNewSessions.add(wsPath);
-    this._startPollingNewSessions(wsPath);
+    this.pendingClaudeTabs.set(tabId, {
+      workspacePath: wsPath,
+      baselineIds,
+      startedAt: Date.now(),
+    });
+    this._schedulePendingClaudePoll(tabId);
   }
 
-  private _startPollingNewSessions(wsPath: string, attempt = 0) {
-    if (!this.pendingNewSessions.has(wsPath)) return;
-    if (attempt > 24) { this.pendingNewSessions.delete(wsPath); return; } // 2 min timeout
-    setTimeout(async () => {
-      if (!this.pendingNewSessions.has(wsPath)) return;
-      try {
-        const sessions = await tauriInvoke<Session[]>("scan_sessions", { workspacePath: wsPath });
-        const old = this.ws.sessions.get(wsPath) || [];
-        if (sessions.length > old.length) {
-          this.ws.sessions.set(wsPath, sessions);
-          this.pendingNewSessions.delete(wsPath);
-          this._renderWorkspaces();
+  private _schedulePendingClaudePoll(tabId: string) {
+    const pending = this.pendingClaudeTabs.get(tabId);
+    if (!pending) return;
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.timer = setTimeout(() => {
+      this._pollPendingClaudeTab(tabId).catch((error) => {
+        console.warn("[Shelf] pending Claude poll failed:", error);
+        if (this._pendingClaudePollExpired(tabId)) {
+          this._clearPendingClaudeTab(tabId);
           return;
         }
-      } catch (_) {}
-      this._startPollingNewSessions(wsPath, attempt + 1);
-    }, 5000);
+        this._schedulePendingClaudePoll(tabId);
+      });
+    }, CLAUDE_NEW_POLL_INTERVAL_MS);
+  }
+
+  private _pendingClaudePollExpired(tabId: string): boolean {
+    const pending = this.pendingClaudeTabs.get(tabId);
+    if (!pending) return true;
+    const now = Date.now();
+    if (pending.linkedSessionId) return !!pending.stableUntil && now >= pending.stableUntil;
+    return now - pending.startedAt > CLAUDE_NEW_DISCOVERY_TIMEOUT_MS;
+  }
+
+  private async _pollPendingClaudeTab(tabId: string) {
+    const pending = this.pendingClaudeTabs.get(tabId);
+    const tab = this.tabs.tabsMap.get(tabId);
+    if (!pending || !tab) {
+      this._clearPendingClaudeTab(tabId);
+      return;
+    }
+
+    const now = Date.now();
+    const discoveryExpired = now - pending.startedAt > CLAUDE_NEW_DISCOVERY_TIMEOUT_MS;
+    if (!pending.linkedSessionId && discoveryExpired) {
+      this._clearPendingClaudeTab(tabId);
+      return;
+    }
+
+    const { sessions } = await this._refreshWorkspaceSessions(pending.workspacePath, "new-claude");
+
+    if (!pending.linkedSessionId) {
+      const session = this._findSessionForPendingClaude(pending, sessions);
+      if (session) {
+        this._linkPendingClaudeTab(tabId, pending, session);
+      }
+    } else {
+      const session = sessions.find((item) => item.id === pending.linkedSessionId);
+      if (session && tab.title !== session.display_title) {
+        tab.title = session.display_title;
+        pending.stableUntil = Date.now() + CLAUDE_NEW_STABILIZE_MS;
+        this._renderTabs();
+      }
+    }
+
+    const latest = this.pendingClaudeTabs.get(tabId);
+    if (!latest) return;
+    if (latest.linkedSessionId && latest.stableUntil && now >= latest.stableUntil) {
+      this._clearPendingClaudeTab(tabId);
+      return;
+    }
+    this._schedulePendingClaudePoll(tabId);
+  }
+
+  private _findSessionForPendingClaude(pending: PendingClaudeTab, sessions: Session[]): Session | undefined {
+    const claimedSessionIds = new Set(
+      Array.from(this.pendingClaudeTabs.values())
+        .map((item) => item.linkedSessionId)
+        .filter((id): id is string => !!id && id !== pending.linkedSessionId),
+    );
+    const candidates = sessions.filter((session) => (
+      !pending.baselineIds.has(session.id) &&
+      !claimedSessionIds.has(session.id)
+    ));
+    if (candidates.length === 0) return undefined;
+    const workspaceCandidates = candidates.filter((session) => (
+      !session.cwd ||
+      session.cwd === pending.workspacePath ||
+      session.cwd.startsWith(pending.workspacePath + "/")
+    ));
+    return (workspaceCandidates.length > 0 ? workspaceCandidates : candidates)
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
+  }
+
+  private _linkPendingClaudeTab(tabId: string, pending: PendingClaudeTab, session: Session) {
+    const tab = this.tabs.tabsMap.get(tabId);
+    if (!tab) {
+      this._clearPendingClaudeTab(tabId);
+      return;
+    }
+
+    pending.linkedSessionId = session.id;
+    pending.stableUntil = Date.now() + CLAUDE_NEW_STABILIZE_MS;
+    tab.sessionId = session.id;
+    tab.title = session.display_title;
+    this.activeSessionIds.add(session.id);
+    if (this.tabs.activeId === tabId) this.focusedSessionId = session.id;
+    this.selectedWorkspace = pending.workspacePath;
+    this.ws.selectedWorkspace = pending.workspacePath;
+    this.ws.expandedWorkspaces.add(pending.workspacePath);
+    this._renderTabs();
+    this._renderWorkspaces();
+  }
+
+  private _clearPendingClaudeTab(tabId: string) {
+    const pending = this.pendingClaudeTabs.get(tabId);
+    if (pending?.timer) clearTimeout(pending.timer);
+    this.pendingClaudeTabs.delete(tabId);
   }
 
   private async _refreshAllSessions() {
     this.refreshBtn.classList.add("spinning");
     try {
       for (const ws of this.ws.workspaces) {
-        await this.ws.scanSessions(ws.path);
+        await this._refreshWorkspaceSessions(ws.path, "manual");
       }
     } finally {
       this.refreshBtn.classList.remove("spinning");
-      this._renderWorkspaces();
     }
   }
 
@@ -425,11 +618,16 @@ class App {
 
   private _writePty(tabId: string, data: string) {
     const tab = this.tabs.tabsMap.get(tabId);
+    if (tab?.sessionId && this.pendingClaudeTabs.has(tabId)) {
+      const pending = this.pendingClaudeTabs.get(tabId);
+      if (pending) pending.stableUntil = Date.now() + CLAUDE_NEW_STABILIZE_MS;
+    }
     if (tab) writeToPty(tab, data);
   }
 
   private _onActivateTab(tab: TabInfo) {
     this.focusedSessionId = tab.sessionId || null;
+    this._syncActiveSessionIds();
     if (tab.workspacePath) {
       this.selectedWorkspace = tab.workspacePath;
       this.ws.selectedWorkspace = tab.workspacePath;
@@ -441,7 +639,8 @@ class App {
   private _onTerminalDrop(path: string) {
     const tab = this.tabs.getActiveTab();
     if (tab && tab.id !== START_TAB_ID && tab.pty) {
-      writeToPty(tab, `"${path}" `);
+      this._clearPendingClaudeTab(tab.id);
+      writeToPty(tab, `'${path.replace(/'/g, "'\\''")}' `);
     }
   }
 
@@ -549,6 +748,7 @@ class App {
               this.activeSessionIds.delete(this.tabs.tabsMap.get(id)!.sessionId!);
               this.focusedSessionId = null;
             }
+            this._clearPendingClaudeTab(id);
             this.tabs.closeTab(id);
           }
           this.ws.remove(ws.path); this._showStartPage();
@@ -649,6 +849,7 @@ class App {
             this.activeSessionIds.delete(tab.sessionId);
             if (this.focusedSessionId === tab.sessionId) this.focusedSessionId = null;
           }
+          this._clearPendingClaudeTab(tab.id);
           this.tabs.closeTab(tab.id, () => this._showStartPage());
         });
       }
@@ -660,6 +861,7 @@ class App {
             this.activeSessionIds.delete(tab.sessionId);
             if (this.focusedSessionId === tab.sessionId) this.focusedSessionId = null;
           }
+          this._clearPendingClaudeTab(tab.id);
           this.tabs.closeTab(tab.id, () => this._showStartPage());
         }
       });

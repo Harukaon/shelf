@@ -64,6 +64,7 @@ pub fn rename_session(session_id: String, new_title: String) -> Result<(), Strin
                 "type": "custom-title",
                 "customTitle": new_title,
                 "sessionId": session_id,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
             });
             let line = serde_json::to_string(&entry)
                 .map_err(|e| format!("Serialize error: {}", e))?;

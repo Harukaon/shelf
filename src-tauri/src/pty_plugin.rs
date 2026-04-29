@@ -2,13 +2,13 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc, Mutex,
     },
 };
 
-use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, PtyPair, PtySize};
-use tauri::{async_runtime::RwLock, AppHandle, Manager, Runtime};
+use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use tauri::{async_runtime::RwLock, AppHandle, Runtime};
 
 #[derive(Default)]
 pub struct PtyState {
@@ -17,11 +17,30 @@ pub struct PtyState {
 }
 
 struct PtySession {
-    pair: Mutex<PtyPair>,
+    master: Mutex<Box<dyn MasterPty + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
     child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     writer: Mutex<Box<dyn std::io::Write + Send>>,
     reader: Mutex<Box<dyn std::io::Read + Send>>,
+    reader_closed: AtomicBool,
+    child_exited: AtomicBool,
+}
+
+async fn remove_session_if_done(
+    pid: u32,
+    session: &Arc<PtySession>,
+    state: &tauri::State<'_, PtyState>,
+) {
+    if session.reader_closed.load(Ordering::Acquire) && session.child_exited.load(Ordering::Acquire)
+    {
+        let mut sessions = state.sessions.write().await;
+        if sessions
+            .get(&pid)
+            .map_or(false, |current| Arc::ptr_eq(current, session))
+        {
+            sessions.remove(&pid);
+        }
+    }
 }
 
 #[tauri::command]
@@ -69,16 +88,20 @@ pub async fn pty_spawn<R: Runtime>(
     }
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     let child_killer = child.clone_killer();
+    let master = pair.master;
+    drop(pair.slave);
     let handler = state.session_id.fetch_add(1, Ordering::Relaxed);
 
     state.sessions.write().await.insert(
         handler,
         Arc::new(PtySession {
-            pair: Mutex::new(pair),
+            master: Mutex::new(master),
             child: Mutex::new(child),
             child_killer: Mutex::new(child_killer),
             writer: Mutex::new(writer),
             reader: Mutex::new(reader),
+            reader_closed: AtomicBool::new(false),
+            child_exited: AtomicBool::new(false),
         }),
     );
     Ok(handler)
@@ -95,15 +118,18 @@ pub async fn pty_write(
         .read()
         .await
         .get(&pid)
-        .ok_or("Unavaliable pid")?
+        .ok_or("Unavailable pid")?
         .clone();
-    session
-        .writer
-        .lock()
-        .map_err(|e| e.to_string())?
-        .write_all(data.as_bytes())
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        session
+            .writer
+            .lock()
+            .map_err(|e| e.to_string())?
+            .write_all(data.as_bytes())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -113,10 +139,11 @@ pub async fn pty_read(pid: u32, state: tauri::State<'_, PtyState>) -> Result<Vec
         .read()
         .await
         .get(&pid)
-        .ok_or("Unavaliable pid")?
+        .ok_or("Unavailable pid")?
         .clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut reader = session.reader.lock().map_err(|e| e.to_string())?;
+    let read_session = session.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut reader = read_session.reader.lock().map_err(|e| e.to_string())?;
         let mut buf = vec![0u8; 4096];
         let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
         if n == 0 {
@@ -128,7 +155,12 @@ pub async fn pty_read(pid: u32, state: tauri::State<'_, PtyState>) -> Result<Vec
         }
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if matches!(result, Err(ref e) if e == "EOF") {
+        session.reader_closed.store(true, Ordering::Release);
+        remove_session_if_done(pid, &session, &state).await;
+    }
+    result
 }
 
 #[tauri::command]
@@ -143,13 +175,12 @@ pub async fn pty_resize(
         .read()
         .await
         .get(&pid)
-        .ok_or("Unavaliable pid")?
+        .ok_or("Unavailable pid")?
         .clone();
     session
-        .pair
+        .master
         .lock()
         .map_err(|e| e.to_string())?
-        .master
         .resize(PtySize {
             rows,
             cols,
@@ -162,20 +193,21 @@ pub async fn pty_resize(
 
 #[tauri::command]
 pub async fn pty_kill(pid: u32, state: tauri::State<'_, PtyState>) -> Result<(), String> {
-    let session = state
-        .sessions
-        .read()
-        .await
-        .get(&pid)
-        .ok_or("Unavaliable pid")?
-        .clone();
-    session
-        .child_killer
-        .lock()
-        .map_err(|e| e.to_string())?
-        .kill()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    let Some(session) = state.sessions.read().await.get(&pid).cloned() else {
+        return Ok(());
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        session
+            .child_killer
+            .lock()
+            .map_err(|e| e.to_string())?
+            .kill()
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    state.sessions.write().await.remove(&pid);
+    result
 }
 
 #[tauri::command]
@@ -185,10 +217,11 @@ pub async fn pty_exitstatus(pid: u32, state: tauri::State<'_, PtyState>) -> Resu
         .read()
         .await
         .get(&pid)
-        .ok_or("Unavaliable pid")?
+        .ok_or("Unavailable pid")?
         .clone();
+    let wait_session = session.clone();
     let exit_code = tauri::async_runtime::spawn_blocking(move || {
-        session
+        wait_session
             .child
             .lock()
             .map_err(|e| e.to_string())?
@@ -198,5 +231,7 @@ pub async fn pty_exitstatus(pid: u32, state: tauri::State<'_, PtyState>) -> Resu
     })
     .await
     .map_err(|e| e.to_string())??;
+    session.child_exited.store(true, Ordering::Release);
+    remove_session_if_done(pid, &session, &state).await;
     Ok(exit_code)
 }

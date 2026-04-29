@@ -13,6 +13,8 @@ export interface Session {
   first_prompt: string | null;
   message_count: number;
   started_at: string;
+  updated_at: string;
+  file_path: string;
   version: string;
 }
 

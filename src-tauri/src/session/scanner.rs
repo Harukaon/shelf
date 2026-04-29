@@ -1,6 +1,8 @@
 use crate::session::Session;
+use chrono::{DateTime, Utc};
 use std::fs;
 use std::path::PathBuf;
+use std::time::UNIX_EPOCH;
 
 pub fn scan_sessions(workspace_path: &str) -> Result<Vec<Session>, String> {
     let sanitized = sanitize_path(workspace_path);
@@ -26,7 +28,7 @@ pub fn scan_sessions(workspace_path: &str) -> Result<Vec<Session>, String> {
         }
     }
 
-    sessions.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     Ok(sessions)
 }
@@ -40,6 +42,7 @@ fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
     let mut ai_title: Option<String> = None;
     let mut first_prompt: Option<String> = None;
     let mut started_at = String::new();
+    let mut updated_at: Option<DateTime<Utc>> = None;
     let mut version = String::new();
     let mut message_count = 0usize;
 
@@ -48,8 +51,15 @@ fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
             continue;
         }
 
-        let value: serde_json::Value = serde_json::from_str(line).map_err(|e| format!("Invalid JSONL: {}", e))?;
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
         message_count += 1;
+        if let Some(timestamp) = value["timestamp"].as_str() {
+            if let Ok(parsed) = DateTime::parse_from_rfc3339(timestamp) {
+                updated_at = Some(parsed.with_timezone(&Utc));
+            }
+        }
 
         let msg_type = value["type"].as_str().unwrap_or("");
 
@@ -86,9 +96,7 @@ fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
                 custom_title = value["customTitle"].as_str().map(|s| s.to_string());
             }
             "ai-title" => {
-                if ai_title.is_none() {
-                    ai_title = value["aiTitle"].as_str().map(|s| s.to_string());
-                }
+                ai_title = value["aiTitle"].as_str().map(|s| s.to_string());
             }
             _ => {}
         }
@@ -103,6 +111,14 @@ fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
         .or_else(|| ai_title.clone())
         .or_else(|| first_prompt.clone())
         .unwrap_or_else(|| "(untitled)".to_string());
+    if let Some(modified_at) = file_modified_at(path) {
+        if updated_at.map_or(true, |current| modified_at > current) {
+            updated_at = Some(modified_at);
+        }
+    }
+    let updated_at = updated_at
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| started_at.clone());
 
     Ok(Some(Session {
         id: session_id,
@@ -113,8 +129,16 @@ fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
         first_prompt,
         message_count,
         started_at,
+        updated_at,
+        file_path: path.to_string_lossy().to_string(),
         version,
     }))
+}
+
+fn file_modified_at(path: &PathBuf) -> Option<DateTime<Utc>> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    let duration = modified.duration_since(UNIX_EPOCH).ok()?;
+    chrono::DateTime::<chrono::Utc>::from_timestamp(duration.as_secs() as i64, duration.subsec_nanos())
 }
 
 fn sanitize_path(path: &str) -> String {
