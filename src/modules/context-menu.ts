@@ -15,6 +15,7 @@ function closeMenu() {
 document.addEventListener("click", closeMenu);
 
 export function showContextMenu(items: MenuItem[], x: number, y: number) {
+  console.log("[Shelf] showContextMenu", items.map(i => i.label), x, y);
   closeMenu();
   const menu = document.createElement("div");
   menu.className = "context-menu";
@@ -25,7 +26,11 @@ export function showContextMenu(items: MenuItem[], x: number, y: number) {
     el.className = `context-item${item.disabled ? " disabled" : ""}`;
     el.textContent = item.label;
     if (!item.disabled) {
-      el.addEventListener("click", () => { closeMenu(); item.action(); });
+      el.addEventListener("click", () => {
+        console.log("[Shelf] context menu action:", item.label);
+        closeMenu();
+        item.action();
+      });
     }
     menu.appendChild(el);
   }

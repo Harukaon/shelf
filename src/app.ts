@@ -193,10 +193,14 @@ class App {
   }
 
   private async _renameSessionPrompt(session: Session) {
+    console.log("[Shelf] rename prompt for:", session.display_title, session.id);
     const newName = prompt("New name:", session.display_title);
+    console.log("[Shelf] rename input:", newName);
     if (newName && newName.trim()) {
       try {
+        console.log("[Shelf] calling rename_session command...");
         await tauriInvoke("rename_session", { sessionId: session.id, newTitle: newName.trim() });
+        console.log("[Shelf] rename_session OK, refreshing...");
         for (const ws of this.ws.workspaces) await this.ws.scanSessions(ws.path);
         this._renderWorkspaces();
       } catch (e) { console.error("Rename failed:", e); }
@@ -383,6 +387,7 @@ class App {
           item.addEventListener("contextmenu", (e) => {
             e.preventDefault();
             e.stopPropagation();
+            console.log("[Shelf] session contextmenu:", session.display_title);
             showContextMenu(
               [{ label: t("context.rename"), action: () => this._renameSessionPrompt(session) }],
               e.clientX, e.clientY,
