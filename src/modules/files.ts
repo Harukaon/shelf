@@ -1,5 +1,8 @@
 import { FileEntry } from "../types";
 import { tauriInvoke, refreshIcons } from "../helpers";
+import { showContextMenu } from "./context-menu";
+import { t } from "../i18n";
+import { open as shellOpen } from "@tauri-apps/plugin-shell";
 
 const childCache = new Map<string, FileEntry[]>();
 
@@ -19,6 +22,8 @@ async function loadChildren(dirPath: string): Promise<FileEntry[]> {
   }
 }
 
+let selectedWorkspacePath = "";
+let onRefreshTree: (() => void) | undefined;
 let rootFiles: FileEntry[] = [];
 
 export async function renderFileTree(
@@ -26,9 +31,13 @@ export async function renderFileTree(
   files: FileEntry[],
   expandedDirs: Set<string>,
   loadedDirs: Set<string>,
+  wsPath: string,
+  onRefresh?: () => void,
   indent = 0,
 ): Promise<void> {
   if (indent === 0) {
+    selectedWorkspacePath = wsPath;
+    onRefreshTree = onRefresh;
     rootFiles = files;
     container.innerHTML = "";
   }
@@ -68,6 +77,22 @@ export async function renderFileTree(
     item.style.cursor = file.is_dir ? "pointer" : "grab";
     item.appendChild(name);
 
+    // Right-click context menu
+    item.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const absPath = file.path;
+      const relPath = selectedWorkspacePath ? absPath.replace(selectedWorkspacePath + "/", "") : absPath;
+      showContextMenu([
+        { label: t("context.open"), action: async () => {
+          try { await shellOpen(absPath); } catch (_) {}
+        }},
+        { label: t("context.copy_rel"), action: () => { navigator.clipboard.writeText(relPath); }},
+        { label: t("context.copy_abs"), action: () => { navigator.clipboard.writeText(absPath); }},
+        { label: t("context.refresh"), action: () => { onRefreshTree?.(); }},
+      ], e.clientX, e.clientY);
+    });
+
     if (file.is_dir) {
       item.addEventListener("click", async () => {
         if (expandedDirs.has(file.path)) {
@@ -80,14 +105,14 @@ export async function renderFileTree(
           expandedDirs.add(file.path);
         }
         // Always re-render from root
-        await renderFileTree(container, rootFiles, expandedDirs, loadedDirs, 0);
+        await renderFileTree(container, rootFiles, expandedDirs, loadedDirs, wsPath, onRefresh, 0);
       });
     }
 
     container.appendChild(item);
 
     if (file.is_dir && isExpanded && file.children.length > 0) {
-      await renderFileTree(container, file.children, expandedDirs, loadedDirs, indent + 1);
+      await renderFileTree(container, file.children, expandedDirs, loadedDirs, wsPath, onRefresh, indent + 1);
     }
   }
 

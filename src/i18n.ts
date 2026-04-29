@@ -36,6 +36,11 @@ const dict: Record<string, Record<string, string>> = {
 
     "process.exited": "[Process exited]",
     "shell.failed": "[Failed to start shell: $1]",
+    "context.rename": "Rename",
+    "context.open": "Open",
+    "context.copy_abs": "Copy Absolute Path",
+    "context.copy_rel": "Copy Relative Path",
+    "context.refresh": "Refresh",
   },
 
   zh: {
@@ -75,6 +80,11 @@ const dict: Record<string, Record<string, string>> = {
 
     "process.exited": "[进程已退出]",
     "shell.failed": "[启动 Shell 失败: $1]",
+    "context.rename": "重命名",
+    "context.open": "打开",
+    "context.copy_abs": "复制绝对路径",
+    "context.copy_rel": "复制相对路径",
+    "context.refresh": "刷新",
   },
 };
 

@@ -10,6 +10,8 @@ import { renderFileTree, clearFileCache } from "./modules/files";
 import { setupDragDrop, setupPanelResize } from "./modules/dragdrop";
 import { t, setLang, getLang } from "./i18n";
 import { showTerminalMenu } from "./modules/pickers";
+import { showContextMenu } from "./modules/context-menu";
+import { open as shellOpen } from "@tauri-apps/plugin-shell";
 
 const START_TAB_ID = "__start__";
 const SESSION_PAGE_SIZE = 6;
@@ -190,6 +192,17 @@ class App {
     showTerminalMenu(this.tabAddBtn, (cwd) => this._createBlankTab(cwd), this.selectedWorkspace);
   }
 
+  private async _renameSessionPrompt(session: Session) {
+    const newName = prompt("New name:", session.display_title);
+    if (newName && newName.trim()) {
+      try {
+        await tauriInvoke("rename_session", { sessionId: session.id, newTitle: newName.trim() });
+        for (const ws of this.ws.workspaces) await this.ws.scanSessions(ws.path);
+        this._renderWorkspaces();
+      } catch (e) { console.error("Rename failed:", e); }
+    }
+  }
+
   private _newClaudeSession(wsPath: string) {
     const tabId = crypto.randomUUID();
     const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
@@ -278,7 +291,7 @@ class App {
       this.expandedDirs.clear();
       this.loadedDirs.clear();
       clearFileCache();
-      await renderFileTree(this.fileTreeEl, files, this.expandedDirs, this.loadedDirs);
+      await renderFileTree(this.fileTreeEl, files, this.expandedDirs, this.loadedDirs, this.selectedWorkspace || "", () => this._loadFileTree(this.selectedWorkspace!));
     } catch (e) {
       console.error("List files:", e);
       this.fileTreeEl.innerHTML = `<div class="tree-empty">${t("file.failed")}</div>`;
@@ -366,6 +379,14 @@ class App {
             e.stopPropagation();
             this._openSessionTab(session, ws.path);
             this._renderWorkspaces();
+          });
+          item.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showContextMenu(
+              [{ label: t("context.rename"), action: () => this._renameSessionPrompt(session) }],
+              e.clientX, e.clientY,
+            );
           });
           sessionList.appendChild(item);
         }
