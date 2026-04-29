@@ -182,6 +182,25 @@ i[data-lucide] {
 .session-item .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .session-item .session-date { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
 
+.pinned-section {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px; margin-bottom: 6px;
+}
+.pinned-label {
+  padding: 6px 12px; font-size: 10px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.pinned-item {
+  padding-left: 12px !important;
+}
+.pinned-info {
+  display: flex; flex-direction: column; flex: 1; min-width: 0;
+}
+.pinned-path {
+  font-size: 9px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .session-load-more {
   padding: 8px 12px 8px 38px; font-size: 11px; color: var(--text-muted);
   cursor: pointer; transition: color 0.1s;

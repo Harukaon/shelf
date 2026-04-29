@@ -42,6 +42,8 @@ const dict: Record<string, Record<string, string>> = {
     "context.copy_rel": "Copy Relative Path",
     "context.refresh": "Refresh",
     "context.delete": "Delete",
+    "context.pin": "Pin to Top",
+    "context.unpin": "Unpin",
     "toast.deleted": "Session moved to trash",
   },
 
@@ -88,6 +90,8 @@ const dict: Record<string, Record<string, string>> = {
     "context.copy_rel": "复制相对路径",
     "context.refresh": "刷新",
     "context.delete": "删除",
+    "context.pin": "置顶",
+    "context.unpin": "取消置顶",
     "toast.deleted": "会话记录已移动到回收站",
   },
 };

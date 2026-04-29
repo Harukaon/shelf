@@ -17,12 +17,14 @@ fn load_config() -> ShelfConfig {
             workspaces: Vec::new(),
             shell: "zsh".to_string(),
             language: "en".to_string(),
+            pinned: Vec::new(),
         })
     } else {
         ShelfConfig {
             workspaces: Vec::new(),
             shell: "zsh".to_string(),
             language: "en".to_string(),
+            pinned: Vec::new(),
         }
     }
 }
@@ -90,7 +92,7 @@ pub fn list_workspaces() -> Result<Vec<serde_json::Value>, String> {
 #[tauri::command]
 pub fn get_settings() -> Result<serde_json::Value, String> {
     let config = load_config();
-    Ok(serde_json::json!({ "shell": config.shell, "language": config.language }))
+    Ok(serde_json::json!({ "shell": config.shell, "language": config.language, "pinned": config.pinned }))
 }
 
 #[tauri::command]
@@ -127,4 +129,26 @@ pub fn detect_terminals() -> Result<serde_json::Value, String> {
         shells.push("zsh".to_string());
     }
     Ok(serde_json::json!({ "shells": shells }))
+}
+
+#[tauri::command]
+pub fn pin_session(session_id: String) -> Result<(), String> {
+    let mut config = load_config();
+    if !config.pinned.contains(&session_id) {
+        config.pinned.push(session_id);
+    }
+    save_config(&config)
+}
+
+#[tauri::command]
+pub fn unpin_session(session_id: String) -> Result<(), String> {
+    let mut config = load_config();
+    config.pinned.retain(|id| id != &session_id);
+    save_config(&config)
+}
+
+#[tauri::command]
+pub fn get_pinned() -> Result<Vec<String>, String> {
+    let config = load_config();
+    Ok(config.pinned)
 }

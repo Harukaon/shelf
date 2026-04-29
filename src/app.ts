@@ -22,6 +22,7 @@ class App {
   activeSessionIds = new Set<string>();
   focusedSessionId: string | null = null;
   shellSetting = "zsh";
+  pinnedIds = new Set<string>();
   pendingNewSessions = new Set<string>();
   expandedDirs = new Set<string>();
   loadedDirs = new Set<string>();
@@ -133,6 +134,7 @@ class App {
       const s = await tauriInvoke<any>("get_settings");
       if (s?.shell) this.shellSetting = s.shell;
       if (s?.language) { setLang(s.language); }
+      if (s?.pinned) { this.pinnedIds = new Set(s.pinned); }
     } catch (_) { /* use default */ }
   }
 
@@ -273,6 +275,19 @@ class App {
     setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 300); }, 2500);
   }
 
+  private async _togglePin(session: Session) {
+    try {
+      if (this.pinnedIds.has(session.id)) {
+        await tauriInvoke("unpin_session", { sessionId: session.id });
+        this.pinnedIds.delete(session.id);
+      } else {
+        await tauriInvoke("pin_session", { sessionId: session.id });
+        this.pinnedIds.add(session.id);
+      }
+      this._renderWorkspaces();
+    } catch (e) { console.error("Pin toggle failed:", e); }
+  }
+
   private async _newClaudeSession(wsPath: string) {
     const tabId = crypto.randomUUID();
     const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
@@ -389,6 +404,46 @@ class App {
 
   private _renderWorkspaces() {
     this.workspaceList.innerHTML = "";
+
+    // Pinned section
+    if (this.pinnedIds.size > 0) {
+      const pinnedDiv = document.createElement("div");
+      pinnedDiv.className = "pinned-section";
+      pinnedDiv.innerHTML = `<div class="pinned-label">📌 Pinned</div>`;
+      for (const ws of this.ws.workspaces) {
+        const sessions = this.ws.sessions.get(ws.path) || [];
+        for (const session of sessions) {
+          if (!this.pinnedIds.has(session.id)) continue;
+          const isActive = this.activeSessionIds.has(session.id);
+          const isFocused = this.focusedSessionId === session.id;
+          const item = document.createElement("div");
+          item.className = `session-item pinned-item${isActive ? " active" : ""}${isFocused ? " focused" : ""}`;
+          item.innerHTML = `
+            <i data-lucide="${isFocused ? "disc" : "circle"}" class="session-icon"></i>
+            <div class="pinned-info">
+              <span class="session-title">${escapeHtml(session.display_title)}</span>
+              <span class="pinned-path">${escapeHtml(ws.name)}</span>
+            </div>
+            <span class="session-date">${formatDate(session.started_at)}</span>`;
+          item.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this._openSessionTab(session, ws.path);
+            this._renderWorkspaces();
+          });
+          item.addEventListener("contextmenu", (e) => {
+            e.preventDefault(); e.stopPropagation();
+            showContextMenu([
+              { label: t("context.unpin"), action: () => this._togglePin(session) },
+              { label: t("context.rename"), action: () => this._renameSessionPrompt(session) },
+              { label: t("context.delete"), action: () => this._deleteSession(session, ws.path) },
+            ], e.clientX, e.clientY);
+          });
+          pinnedDiv.appendChild(item);
+        }
+      }
+      this.workspaceList.appendChild(pinnedDiv);
+    }
+
     for (const ws of this.ws.workspaces) {
       const wsDiv = document.createElement("div");
       wsDiv.className = "workspace-item";
@@ -473,8 +528,10 @@ class App {
             e.preventDefault();
             e.stopPropagation();
             console.log("[Shelf] session contextmenu:", session.display_title);
+            const isPinned = this.pinnedIds.has(session.id);
             showContextMenu(
               [{ label: t("context.rename"), action: () => this._renameSessionPrompt(session) },
+               { label: isPinned ? t("context.unpin") : t("context.pin"), action: () => this._togglePin(session) },
                { label: t("context.delete"), action: () => this._deleteSession(session, ws.path) }],
               e.clientX, e.clientY,
             );
@@ -522,6 +579,16 @@ class App {
         });
       }
       tabEl.addEventListener("click", () => this.tabs.activateTab(tab.id));
+      tabEl.addEventListener("auxclick", (e) => {
+        if (e.button === 1 && tab.closable) {
+          e.preventDefault();
+          if (tab.sessionId) {
+            this.activeSessionIds.delete(tab.sessionId);
+            if (this.focusedSessionId === tab.sessionId) this.focusedSessionId = null;
+          }
+          this.tabs.closeTab(tab.id, () => this._showStartPage());
+        }
+      });
       this.tabList.appendChild(tabEl);
     }
     refreshIcons();

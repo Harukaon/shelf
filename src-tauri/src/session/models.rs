@@ -26,6 +26,8 @@ pub struct ShelfConfig {
     pub shell: String,
     #[serde(default = "default_lang")]
     pub language: String,
+    #[serde(default)]
+    pub pinned: Vec<String>,
 }
 
 fn default_shell() -> String { "zsh".to_string() }
