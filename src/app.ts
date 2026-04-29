@@ -99,7 +99,7 @@ class App {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "w") {
         e.preventDefault();
         e.stopPropagation();
-        getCurrentWebviewWindow().minimize();
+        getCurrentWebviewWindow().hide();
       }
     });
     for (const ws of this.ws.workspaces) { await this.ws.scanSessions(ws.path); }

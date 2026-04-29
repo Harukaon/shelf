@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capability for Shelf","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-close","core:window:allow-minimize","shell:allow-open","pty:default","dialog:default"]}}
+{"default":{"identifier":"default","description":"Default capability for Shelf","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-close","core:window:allow-minimize","core:window:allow-hide","shell:allow-open","pty:default","dialog:default"]}}
