@@ -102,7 +102,7 @@ class App {
 
     await this._loadSettings();
     this._updateStaticTexts();
-    this._loadClaudePath();
+    await this._loadClaudePath();
     this._createStartTab();
     await this.ws.load();
     this._setupCloseConfirm();

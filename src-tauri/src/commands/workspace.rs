@@ -1,6 +1,6 @@
-use crate::session::{Workspace, ShelfConfig};
+use crate::session::{ShelfConfig, Workspace};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn config_path() -> PathBuf {
     dirs::home_dir()
@@ -160,25 +160,94 @@ pub fn exit_app() {
 
 #[tauri::command]
 pub fn find_claude() -> Result<String, String> {
-    // Try common paths
-    let candidates = vec![
-        "claude",  // PATH
-    ];
-    for c in &candidates {
-        if let Ok(out) = std::process::Command::new("which").arg(c).output() {
-            if out.status.success() {
-                return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string());
-            }
+    for path in claude_candidates() {
+        if is_executable_file(&path) {
+            return Ok(path.to_string_lossy().to_string());
         }
     }
-    // Fallback: try zsh login to find it
-    if let Ok(out) = std::process::Command::new("zsh")
-        .args(["-l", "-c", "which claude"])
-        .output()
-    {
-        if out.status.success() {
-            return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string());
+
+    for shell in ["/bin/zsh", "/bin/bash", "/bin/sh"] {
+        if let Some(path) = find_claude_with_shell(shell) {
+            return Ok(path);
         }
     }
+
     Err("claude not found".to_string())
+}
+
+fn claude_candidates() -> Vec<PathBuf> {
+    let mut candidates = vec![
+        PathBuf::from("/opt/homebrew/bin/claude"),
+        PathBuf::from("/usr/local/bin/claude"),
+        PathBuf::from("/usr/bin/claude"),
+    ];
+
+    if let Some(home) = dirs::home_dir() {
+        candidates.extend([
+            home.join(".local/bin/claude"),
+            home.join("bin/claude"),
+            home.join(".volta/bin/claude"),
+            home.join(".asdf/shims/claude"),
+            home.join(".bun/bin/claude"),
+            home.join(".npm-global/bin/claude"),
+            home.join("Library/pnpm/claude"),
+        ]);
+        candidates.extend(find_nvm_claude_bins(&home));
+        candidates.extend(find_fnm_claude_bins(&home));
+    }
+
+    candidates
+}
+
+fn find_nvm_claude_bins(home: &Path) -> Vec<PathBuf> {
+    find_versioned_bin_candidates(&home.join(".nvm/versions/node"))
+}
+
+fn find_fnm_claude_bins(home: &Path) -> Vec<PathBuf> {
+    let mut candidates = find_versioned_bin_candidates(&home.join(".fnm/node-versions"));
+    candidates.extend(find_versioned_bin_candidates(&home.join("Library/Application Support/fnm/node-versions")));
+    candidates
+}
+
+fn find_versioned_bin_candidates(root: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let Ok(entries) = fs::read_dir(root) else {
+        return candidates;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        candidates.push(path.join("bin/claude"));
+        candidates.extend(find_versioned_bin_candidates(&path));
+    }
+
+    candidates
+}
+
+fn find_claude_with_shell(shell: &str) -> Option<String> {
+    let command = r#"
+        export NVM_DIR="$HOME/.nvm"
+        [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1
+        [ -s "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" >/dev/null 2>&1
+        command -v claude
+    "#;
+    let output = std::process::Command::new(shell)
+        .args(["-l", "-c", command])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
 }
