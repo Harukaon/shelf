@@ -79,11 +79,14 @@ class App {
     });
 
     await this._loadSettings();
+    this._updateStaticTexts();
     this._createStartTab();
     await this.ws.load();
   }
 
   private _createStartTab() {
+    const old = this.tabs.tabsMap.get(START_TAB_ID);
+    if (old) { old.containerEl.remove(); }
     const container = document.createElement("div");
     container.className = "terminal-wrapper start-page";
     container.dataset.tabId = START_TAB_ID;
@@ -129,6 +132,10 @@ class App {
     } catch (_) { /* use default */ }
   }
 
+  private _updateStaticTexts() {
+    this.addWorkspaceBtn.textContent = t("workspace.add");
+  }
+
   private _showSettings() {
     const panel = document.createElement("div");
     panel.className = "settings-panel";
@@ -170,11 +177,11 @@ class App {
       this.shellSetting = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;
       const newLang = (panel.querySelector("#settings-lang") as HTMLSelectElement).value;
       setLang(newLang);
-      try { await tauriInvoke("save_settings", { shell: this.shellSetting, language: newLang }); } catch (_) {}
+      try { await tauriInvoke("save_settings", { shell: this.shellSetting, language: newLang }); } catch (e) { console.error("save_settings failed:", e); }
       close();
-      this._renderWorkspaces();
-      this._renderTabs();
+      this._updateStaticTexts();
       this._createStartTab();
+      this._renderWorkspaces();
     });
     panel.querySelector("#settings-cancel")!.addEventListener("click", close);
   }
@@ -366,7 +373,7 @@ class App {
           const remaining = allSessions.length - pageEnd;
           const moreBtn = document.createElement("div");
           moreBtn.className = "session-load-more";
-          moreBtn.textContent = `Load ${Math.min(remaining, SESSION_PAGE_SIZE)} more (${remaining} remaining)`;
+          moreBtn.textContent = `${t("session.load")} ${Math.min(remaining, SESSION_PAGE_SIZE)} ${t("session.load_more")} (${remaining} ${t("session.remaining")})`;
           moreBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             this.ws.sessionPages.set(ws.path, page + 1);
