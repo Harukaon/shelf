@@ -85,6 +85,7 @@ class App {
     this._updateStaticTexts();
     this._createStartTab();
     await this.ws.load();
+    this._startPassivePolling();
   }
 
   private _createStartTab() {
@@ -137,6 +138,23 @@ class App {
 
   private _updateStaticTexts() {
     this.addWorkspaceBtn.textContent = t("workspace.add");
+  }
+
+  private _passiveTimer: ReturnType<typeof setInterval> | null = null;
+
+  private _startPassivePolling() {
+    if (this._passiveTimer) clearInterval(this._passiveTimer);
+    this._passiveTimer = setInterval(() => {
+      for (const ws of this.ws.workspaces) {
+        tauriInvoke<Session[]>("scan_sessions", { workspacePath: ws.path }).then(sessions => {
+          const old = this.ws.sessions.get(ws.path) || [];
+          if (sessions.length !== old.length) {
+            this.ws.sessions.set(ws.path, sessions);
+            this._renderWorkspaces();
+          }
+        }).catch(() => {});
+      }
+    }, 60_000);
   }
 
   private _showSettings() {
