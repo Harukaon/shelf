@@ -1,7 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { spawn, IPty } from "./pty";
-import { TabInfo, TerminalThemeConfig } from "../types";
+import { TabInfo } from "../types";
 import { t } from "../i18n";
 
 export function flushTabBuffer(tab: TabInfo) {
@@ -35,7 +35,11 @@ export function repaintTerminal(tab: TabInfo) {
   });
 }
 
-const ANSI_THEME = {
+const TERMINAL_THEME = {
+  background: "#282C34",
+  foreground: "#F3F3F4",
+  cursor: "#F3F3F4",
+  selectionBackground: "#3A4250",
   black: "#2b313c",
   red: "#e06c75",
   green: "#98c379",
@@ -54,83 +58,6 @@ const ANSI_THEME = {
   brightWhite: "#f1f3f5",
 };
 
-export const TERMINAL_THEME_PRESETS: Record<string, TerminalThemeConfig> = {
-  shelf_comfort: {
-    preset: "shelf_comfort",
-    background: "#282C34",
-    foreground: "#E0E0E1",
-    cursor: "#F3F3F4",
-    selectionBackground: "#3A4250",
-  },
-  ghostty: {
-    preset: "ghostty",
-    background: "#282C34",
-    foreground: "#F3F3F4",
-    cursor: "#F3F3F4",
-    selectionBackground: "#3A4250",
-  },
-  mac_terminal: {
-    preset: "mac_terminal",
-    background: "#212734",
-    foreground: "#E0E0E1",
-    cursor: "#F3F3F4",
-    selectionBackground: "#384252",
-  },
-  catppuccin: {
-    preset: "catppuccin",
-    background: "#1E1E2E",
-    foreground: "#CDD6F4",
-    cursor: "#F5E0DC",
-    selectionBackground: "#45475A",
-  },
-};
-
-export const DEFAULT_TERMINAL_THEME: TerminalThemeConfig = TERMINAL_THEME_PRESETS.shelf_comfort;
-
-let terminalThemeConfig: TerminalThemeConfig = { ...DEFAULT_TERMINAL_THEME };
-
-function toXtermTheme(theme: TerminalThemeConfig) {
-  return {
-    ...ANSI_THEME,
-    background: theme.background,
-    foreground: theme.foreground,
-    cursor: theme.cursor,
-    selectionBackground: theme.selectionBackground,
-  };
-}
-
-export function normalizeTerminalTheme(input?: Partial<TerminalThemeConfig> | null): TerminalThemeConfig {
-  const preset = input?.preset === "custom"
-    ? "custom"
-    : input?.preset && TERMINAL_THEME_PRESETS[input.preset]
-    ? input.preset
-    : DEFAULT_TERMINAL_THEME.preset;
-  const base = preset === "custom" ? DEFAULT_TERMINAL_THEME : TERMINAL_THEME_PRESETS[preset] || DEFAULT_TERMINAL_THEME;
-  return {
-    ...base,
-    ...input,
-    preset,
-  };
-}
-
-export function getTerminalThemeConfig(): TerminalThemeConfig {
-  return { ...terminalThemeConfig };
-}
-
-export function setTerminalThemeConfig(theme: TerminalThemeConfig) {
-  terminalThemeConfig = normalizeTerminalTheme(theme);
-}
-
-export function applyTerminalTheme(tab: TabInfo, theme: TerminalThemeConfig = terminalThemeConfig) {
-  if (!tab.terminal) return;
-  tab.terminal.options.theme = toXtermTheme(theme);
-  try {
-    tab.terminal.refresh(0, tab.terminal.rows - 1);
-  } catch (_) {
-    /* ignore */
-  }
-}
-
 export function createTerminalTab(
   tabId: string,
   title: string,
@@ -142,7 +69,9 @@ export function createTerminalTab(
     cursorBlink: true,
     fontSize: 13,
     fontFamily: '"SF Mono", "Fira Code", "JetBrains Mono", "Menlo", monospace',
-    theme: toXtermTheme(terminalThemeConfig),
+    fontWeight: 300,
+    fontWeightBold: 500,
+    theme: TERMINAL_THEME,
     allowProposedApi: true,
   });
   const fitAddon = new FitAddon();

@@ -5,17 +5,7 @@ import { tauriInvoke, refreshIcons, escapeHtml, formatDate } from "./helpers";
 import { Session, FileEntry, TabInfo } from "./types";
 import { TabManager } from "./modules/tabs";
 import { WorkspaceManager } from "./modules/workspace";
-import {
-  applyTerminalTheme,
-  createTerminalTab,
-  DEFAULT_TERMINAL_THEME,
-  getTerminalThemeConfig,
-  normalizeTerminalTheme,
-  repaintTerminal,
-  setTerminalThemeConfig,
-  TERMINAL_THEME_PRESETS,
-  writeToPty,
-} from "./modules/terminal";
+import { createTerminalTab, repaintTerminal, writeToPty } from "./modules/terminal";
 import { renderFileTree, clearFileCache } from "./modules/files";
 import { setupDragDrop, setupPanelResize } from "./modules/dragdrop";
 import { t, setLang, getLang } from "./i18n";
@@ -189,7 +179,6 @@ class App {
       const s = await tauriInvoke<any>("get_settings");
       if (s?.shell) this.shellSetting = s.shell;
       if (s?.language) { setLang(s.language); }
-      setTerminalThemeConfig(normalizeTerminalTheme(s?.terminal_theme));
       if (s?.pinned) { this.pinnedIds = new Set(s.pinned); }
     } catch (_) { /* use default */ }
   }
@@ -328,26 +317,9 @@ class App {
     this.focusedSessionId = activeTab?.sessionId || null;
   }
 
-  private _applyTerminalThemeToOpenTabs() {
-    const theme = getTerminalThemeConfig();
-    for (const tab of this.tabs.tabsMap.values()) {
-      if (tab.terminal) applyTerminalTheme(tab, theme);
-    }
-    const active = this.tabs.getActiveTab();
-    if (active) repaintTerminal(active);
-  }
-
   private _showSettings() {
     const panel = document.createElement("div");
     panel.className = "settings-panel";
-    const currentTheme = getTerminalThemeConfig();
-    const presetOptions = [
-      ["shelf_comfort", t("settings.theme_preset.comfort")],
-      ["ghostty", "Ghostty"],
-      ["mac_terminal", t("settings.theme_preset.mac")],
-      ["catppuccin", "Catppuccin"],
-      ["custom", t("settings.theme_preset.custom")],
-    ];
     panel.innerHTML = `
       <div class="settings-title">${t("settings.title")}</div>
       <div class="settings-row"><label>${t("settings.shell")}</label><select id="settings-shell"></select></div>
@@ -356,22 +328,6 @@ class App {
           <option value="en">English</option>
           <option value="zh">中文</option>
         </select>
-      </div>
-      <div class="settings-section-title">${t("settings.terminal_theme")}</div>
-      <div class="settings-row"><label>${t("settings.theme_preset")}</label>
-        <select id="settings-theme-preset">
-          ${presetOptions.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}
-        </select>
-      </div>
-      <div class="settings-theme-grid">
-        <label>${t("settings.theme_background")}<input class="theme-color" id="theme-background" value="${escapeHtml(currentTheme.background)}" maxlength="7"></label>
-        <label>${t("settings.theme_foreground")}<input class="theme-color" id="theme-foreground" value="${escapeHtml(currentTheme.foreground)}" maxlength="7"></label>
-        <label>${t("settings.theme_cursor")}<input class="theme-color" id="theme-cursor" value="${escapeHtml(currentTheme.cursor)}" maxlength="7"></label>
-        <label>${t("settings.theme_selection")}<input class="theme-color" id="theme-selection" value="${escapeHtml(currentTheme.selectionBackground)}" maxlength="7"></label>
-      </div>
-      <div class="settings-theme-preview" id="settings-theme-preview">
-        <span>$ claude --resume</span>
-        <strong>${t("settings.theme_preview")}</strong>
       </div>
       <div class="settings-actions">
         <button id="settings-save">${t("settings.save")}</button>
@@ -398,67 +354,12 @@ class App {
       langSel.value = getLang();
     }).catch(() => {});
 
-    const presetSel = panel.querySelector("#settings-theme-preset") as HTMLSelectElement;
-    const bgInput = panel.querySelector("#theme-background") as HTMLInputElement;
-    const fgInput = panel.querySelector("#theme-foreground") as HTMLInputElement;
-    const cursorInput = panel.querySelector("#theme-cursor") as HTMLInputElement;
-    const selectionInput = panel.querySelector("#theme-selection") as HTMLInputElement;
-    const preview = panel.querySelector("#settings-theme-preview") as HTMLElement;
-    presetSel.value = currentTheme.preset;
-
-    const isHex = (value: string) => /^#[0-9a-fA-F]{6}$/.test(value.trim());
-    const sanitizeHex = (value: string, fallback: string) => isHex(value) ? value.trim().toUpperCase() : fallback;
-    const readTheme = () => normalizeTerminalTheme({
-      preset: presetSel.value,
-      background: sanitizeHex(bgInput.value, DEFAULT_TERMINAL_THEME.background),
-      foreground: sanitizeHex(fgInput.value, DEFAULT_TERMINAL_THEME.foreground),
-      cursor: sanitizeHex(cursorInput.value, DEFAULT_TERMINAL_THEME.cursor),
-      selectionBackground: sanitizeHex(selectionInput.value, DEFAULT_TERMINAL_THEME.selectionBackground),
-    });
-    const writeThemeInputs = (theme: ReturnType<typeof normalizeTerminalTheme>) => {
-      bgInput.value = theme.background;
-      fgInput.value = theme.foreground;
-      cursorInput.value = theme.cursor;
-      selectionInput.value = theme.selectionBackground;
-      preview.style.background = theme.background;
-      preview.style.color = theme.foreground;
-      preview.style.borderColor = theme.selectionBackground;
-      preview.style.setProperty("--preview-selection", theme.selectionBackground);
-    };
-    const markCustom = () => {
-      if (presetSel.value !== "custom") presetSel.value = "custom";
-      const theme = readTheme();
-      preview.style.background = theme.background;
-      preview.style.color = theme.foreground;
-      preview.style.borderColor = theme.selectionBackground;
-      preview.style.setProperty("--preview-selection", theme.selectionBackground);
-    };
-    presetSel.addEventListener("change", () => {
-      const preset = TERMINAL_THEME_PRESETS[presetSel.value] || currentTheme;
-      writeThemeInputs(normalizeTerminalTheme(presetSel.value === "custom" ? { ...readTheme(), preset: "custom" } : preset));
-    });
-    for (const input of [bgInput, fgInput, cursorInput, selectionInput]) {
-      input.addEventListener("input", markCustom);
-    }
-    writeThemeInputs(currentTheme);
-
     panel.querySelector("#settings-save")!.addEventListener("click", async () => {
       this.shellSetting = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;
       const newLang = (panel.querySelector("#settings-lang") as HTMLSelectElement).value;
-      const terminalTheme = readTheme();
-      setTerminalThemeConfig(terminalTheme);
       setLang(newLang);
-      try {
-        await tauriInvoke("save_settings", {
-          settings: {
-            shell: this.shellSetting,
-            language: newLang,
-            terminal_theme: terminalTheme,
-          },
-        });
-      } catch (e) { console.error("save_settings failed:", e); }
+      try { await tauriInvoke("save_settings", { settings: { shell: this.shellSetting, language: newLang } }); } catch (e) { console.error("save_settings failed:", e); }
       close();
-      this._applyTerminalThemeToOpenTabs();
       this._updateStaticTexts();
       this._createStartTab();
       this._renderWorkspaces();

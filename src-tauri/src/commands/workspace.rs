@@ -17,7 +17,6 @@ fn load_config() -> ShelfConfig {
             workspaces: Vec::new(),
             shell: "zsh".to_string(),
             language: "en".to_string(),
-            terminal_theme: Default::default(),
             pinned: Vec::new(),
         })
     } else {
@@ -25,7 +24,6 @@ fn load_config() -> ShelfConfig {
             workspaces: Vec::new(),
             shell: "zsh".to_string(),
             language: "en".to_string(),
-            terminal_theme: Default::default(),
             pinned: Vec::new(),
         }
     }
@@ -97,7 +95,6 @@ pub fn get_settings() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({
         "shell": config.shell,
         "language": config.language,
-        "terminal_theme": config.terminal_theme,
         "pinned": config.pinned,
     }))
 }
@@ -115,9 +112,6 @@ pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
     }
     if let Some(lang) = payload.get("language").and_then(|s| s.as_str()) {
         config.language = lang.to_string();
-    }
-    if let Some(theme) = payload.get("terminal_theme") {
-        config.terminal_theme = serde_json::from_value(theme.clone()).unwrap_or_default();
     }
     save_config(&config)
 }
