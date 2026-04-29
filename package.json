@@ -17,8 +17,7 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "lucide": "^1.11.0",
-    "sortablejs": "^1.15.7",
-    "tauri-pty": "^0.2.1"
+    "sortablejs": "^1.15.7"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

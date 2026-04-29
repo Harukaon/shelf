@@ -1,6 +1,6 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { spawn, IPty } from "tauri-pty";
+import { spawn, IPty } from "./pty";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
 
