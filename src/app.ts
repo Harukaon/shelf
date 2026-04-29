@@ -409,7 +409,7 @@ class App {
     if (this.pinnedIds.size > 0) {
       const pinnedDiv = document.createElement("div");
       pinnedDiv.className = "pinned-section";
-      pinnedDiv.innerHTML = `<div class="pinned-label">📌 Pinned</div>`;
+      pinnedDiv.innerHTML = `<div class="pinned-label"><i data-lucide="pin"></i> Pinned</div>`;
       for (const ws of this.ws.workspaces) {
         const sessions = this.ws.sessions.get(ws.path) || [];
         for (const session of sessions) {
