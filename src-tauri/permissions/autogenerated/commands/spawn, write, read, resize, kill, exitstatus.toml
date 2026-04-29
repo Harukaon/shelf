@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-spawn, write, read, resize, kill, exitstatus"
+description = "Enables the spawn, write, read, resize, kill, exitstatus command without any pre-configured scope."
+commands.allow = ["spawn, write, read, resize, kill, exitstatus"]
+
+[[permission]]
+identifier = "deny-spawn, write, read, resize, kill, exitstatus"
+description = "Denies the spawn, write, read, resize, kill, exitstatus command without any pre-configured scope."
+commands.deny = ["spawn, write, read, resize, kill, exitstatus"]
