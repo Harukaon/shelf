@@ -98,9 +98,7 @@ class App {
           <div>Press <kbd>+</kbd> in tab bar for a blank terminal</div>
         </div>
         <div class="start-page-warning">
-          ⚠ Avoid using <code>/resume</code> or <code>claude --resume</code> directly inside the terminal to switch sessions.
-          This will cause tab display to go out of sync with Shelf's session management.
-          Please use the left panel to manage your sessions instead.
+          Tip: Avoid using <code>/resume</code> or <code>claude --resume</code> directly in the terminal to switch sessions, as this will cause tab display to go out of sync. Use the left panel instead.
         </div>
       </div>`;
     this.terminalContainer.appendChild(container);
