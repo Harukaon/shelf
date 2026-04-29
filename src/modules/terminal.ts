@@ -55,12 +55,15 @@ export function createTerminalTab(
       const shellBin = options?.shell || "zsh";
       pty = spawn(shellBin, [], spawnOpts);
     }
-    pty.onData((data: Uint8Array) => terminal.write(data));
+    pty.onData((data: Uint8Array) => {
+      if (wrapper.style.display !== "none") terminal.write(data);
+    });
     terminal.onData((data: string) => onPtyWrite(tabId, data));
     pty.onExit(() => terminal.write(`\r\n${t("process.exited")}\r\n`));
   } catch (e) {
     console.error("Spawn PTY:", e);
-    terminal.write(`\r\n${t("shell.failed", String(e))}\r\n`);
+    terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
+    terminal.writeln("Try closing some tabs or restarting Shelf.");
   }
 
   const wrapper = document.createElement("div");
@@ -71,7 +74,7 @@ export function createTerminalTab(
   terminalContainer.appendChild(wrapper);
 
   terminal.onResize(({ cols, rows }) => {
-    if (pty) {
+    if (pty && cols > 0 && rows > 0 && wrapper.style.display !== "none") {
       try {
         pty.resize(cols, rows);
       } catch (_) {
