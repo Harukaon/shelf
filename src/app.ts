@@ -194,17 +194,42 @@ class App {
 
   private async _renameSessionPrompt(session: Session) {
     console.log("[Shelf] rename prompt for:", session.display_title, session.id);
-    const newName = prompt("New name:", session.display_title);
-    console.log("[Shelf] rename input:", newName);
-    if (newName && newName.trim()) {
+    const panel = document.createElement("div");
+    panel.className = "settings-panel";
+    panel.innerHTML = `
+      <div class="settings-title">${t("context.rename")}</div>
+      <div class="settings-row">
+        <input id="rename-input" value="${escapeHtml(session.display_title)}" style="flex:1;padding:6px 10px;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;font-family:inherit;font-size:13px;outline:none;" autofocus>
+      </div>
+      <div class="settings-actions">
+        <button id="rename-save">${t("settings.save")}</button>
+        <button id="rename-cancel">${t("settings.cancel")}</button>
+      </div>`;
+    const backdrop = document.createElement("div");
+    backdrop.className = "picker-backdrop";
+    const close = () => { panel.remove(); backdrop.remove(); };
+    backdrop.addEventListener("click", close);
+    document.body.appendChild(backdrop);
+    document.body.appendChild(panel);
+    const input = panel.querySelector("#rename-input") as HTMLInputElement;
+    input.focus();
+    input.select();
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") doSave(); });
+    const doSave = async () => {
+      const newName = input.value.trim();
+      console.log("[Shelf] rename new name:", newName);
+      if (!newName) return;
       try {
         console.log("[Shelf] calling rename_session command...");
-        await tauriInvoke("rename_session", { sessionId: session.id, newTitle: newName.trim() });
+        await tauriInvoke("rename_session", { sessionId: session.id, newTitle: newName });
         console.log("[Shelf] rename_session OK, refreshing...");
         for (const ws of this.ws.workspaces) await this.ws.scanSessions(ws.path);
         this._renderWorkspaces();
       } catch (e) { console.error("Rename failed:", e); }
-    }
+      close();
+    };
+    panel.querySelector("#rename-save")!.addEventListener("click", doSave);
+    panel.querySelector("#rename-cancel")!.addEventListener("click", close);
   }
 
   private _newClaudeSession(wsPath: string) {
