@@ -292,6 +292,18 @@ class App {
       removeBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         if (deletePending) {
+          // Close all tabs belonging to this workspace
+          const toClose: string[] = [];
+          for (const [, tab] of this.tabs.tabsMap) {
+            if (tab.workspacePath === ws.path && tab.closable) toClose.push(tab.id);
+          }
+          for (const id of toClose) {
+            if (this.tabs.tabsMap.get(id)?.sessionId) {
+              this.activeSessionIds.delete(this.tabs.tabsMap.get(id)!.sessionId!);
+              this.focusedSessionId = null;
+            }
+            this.tabs.closeTab(id);
+          }
           this.ws.remove(ws.path); this._showStartPage();
         } else {
           deletePending = true;
