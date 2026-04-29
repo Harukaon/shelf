@@ -96,6 +96,13 @@ class App {
         e.stopPropagation();
         this._showQuitDialog();
       }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "w") {
+        const activeTab = this.tabs.getActiveTab();
+        if (activeTab && activeTab.closable && activeTab.id !== START_TAB_ID) {
+          e.preventDefault();
+          this.tabs.closeTab(activeTab.id, () => this._showStartPage());
+        }
+      }
     });
     for (const ws of this.ws.workspaces) { await this.ws.scanSessions(ws.path); }
     this._renderWorkspaces();
@@ -342,7 +349,7 @@ class App {
     const tabId = crypto.randomUUID();
     const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { cwd: wsPath, workspacePath: wsPath, command: { bin: "zsh", args: ["-l", "-c", "claude"] } },
+      { cwd: wsPath, workspacePath: wsPath, command: { bin: "zsh", args: ["-i", "-l", "-c", "claude"] } },
     );
     this.tabs.addTab(tab);
     this.pendingNewSessions.add(wsPath);
@@ -399,7 +406,7 @@ class App {
     const cwd = session.cwd || wsPath;
     const tab = createTerminalTab(tabId, session.display_title, this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { sessionId: session.id, cwd, workspacePath: wsPath, command: { bin: "zsh", args: ["-l", "-c", `claude --resume ${session.id}`] } },
+      { sessionId: session.id, cwd, workspacePath: wsPath, command: { bin: "zsh", args: ["-i", "-l", "-c", `claude --resume ${session.id}`] } },
     );
     this.tabs.addTab(tab);
     this.activeSessionIds.add(session.id);
