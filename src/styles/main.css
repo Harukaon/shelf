@@ -27,15 +27,42 @@
 }
 
 /* ─── Global Scrollbar (dark theme) ─── */
-* {
+html, body, #app,
+#workspace-list, #file-tree, .picker-list,
+.session-picker .picker-list {
   scrollbar-width: thin;
   scrollbar-color: var(--bg-active) transparent;
 }
-*::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: var(--bg-active); border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
-*::-webkit-scrollbar-corner { background: transparent; }
+html::-webkit-scrollbar, body::-webkit-scrollbar, #app::-webkit-scrollbar,
+#workspace-list::-webkit-scrollbar, #file-tree::-webkit-scrollbar,
+.picker-list::-webkit-scrollbar,
+.session-picker .picker-list::-webkit-scrollbar {
+  width: 8px; height: 8px;
+}
+html::-webkit-scrollbar-track, body::-webkit-scrollbar-track, #app::-webkit-scrollbar-track,
+#workspace-list::-webkit-scrollbar-track, #file-tree::-webkit-scrollbar-track,
+.picker-list::-webkit-scrollbar-track,
+.session-picker .picker-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb, #app::-webkit-scrollbar-thumb,
+#workspace-list::-webkit-scrollbar-thumb, #file-tree::-webkit-scrollbar-thumb,
+.picker-list::-webkit-scrollbar-thumb,
+.session-picker .picker-list::-webkit-scrollbar-thumb {
+  background: var(--bg-active); border-radius: 4px;
+}
+html::-webkit-scrollbar-thumb:hover, body::-webkit-scrollbar-thumb:hover, #app::-webkit-scrollbar-thumb:hover,
+#workspace-list::-webkit-scrollbar-thumb:hover, #file-tree::-webkit-scrollbar-thumb:hover,
+.picker-list::-webkit-scrollbar-thumb:hover,
+.session-picker .picker-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+html::-webkit-scrollbar-corner, body::-webkit-scrollbar-corner, #app::-webkit-scrollbar-corner,
+#workspace-list::-webkit-scrollbar-corner, #file-tree::-webkit-scrollbar-corner,
+.picker-list::-webkit-scrollbar-corner,
+.session-picker .picker-list::-webkit-scrollbar-corner {
+  background: transparent;
+}
 
 html, body, #app {
   width: 100%;
