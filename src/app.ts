@@ -81,6 +81,8 @@ class App {
     this.refreshBtn.addEventListener("click", () => this._refreshAllSessions());
     this.addWorkspaceBtn.addEventListener("click", () => this.ws.promptAdd());
 
+    this._setupPlatformWindowControls();
+
     setupDragDrop(
       this.terminalContainer,
       this.workspaceList,
@@ -185,6 +187,21 @@ class App {
 
   private _updateStaticTexts() {
     this.addWorkspaceBtn.textContent = t("workspace.add");
+  }
+
+  private _setupPlatformWindowControls() {
+    const platform = navigator.platform.toLowerCase();
+    const isMac = platform.includes("mac");
+    document.body.setAttribute("data-platform", isMac ? "macos" : "windows");
+
+    if (!isMac) {
+      const controls = document.getElementById("window-controls");
+      if (controls) controls.style.display = "flex";
+      const win = getCurrentWebviewWindow();
+      document.getElementById("win-minimize")?.addEventListener("click", () => win.minimize());
+      document.getElementById("win-maximize")?.addEventListener("click", () => win.toggleMaximize());
+      document.getElementById("win-close")?.addEventListener("click", () => this._showQuitDialog());
+    }
   }
 
   private _setupCloseConfirm() {
