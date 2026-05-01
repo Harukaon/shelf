@@ -202,6 +202,16 @@ class App {
       document.getElementById("win-maximize")?.addEventListener("click", () => win.toggleMaximize());
       document.getElementById("win-close")?.addEventListener("click", () => this._showQuitDialog());
     }
+
+    // startDragging() API — data-tauri-drag-region is unreliable with overlay title bar
+    const tabBar = document.getElementById("tab-bar")!;
+    const win = getCurrentWebviewWindow();
+    tabBar.addEventListener("mousedown", (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest("button") || target.closest(".tab-item") || target.closest(".tab-close")) return;
+      e.preventDefault();
+      win.startDragging();
+    });
   }
 
   private _setupCloseConfirm() {

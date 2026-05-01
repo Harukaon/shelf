@@ -15,6 +15,7 @@ pub fn run() {
             window.set_title("Shelf").ok();
             #[cfg(target_os = "windows")]
             window.set_theme(Some(tauri::Theme::Dark)).ok();
+            let _ = window.set_title_bar_style(tauri::TitleBarStyle::Overlay);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
