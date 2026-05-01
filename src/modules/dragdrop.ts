@@ -2,10 +2,25 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
 
 type DropZone = "terminal" | "workspace";
+type LogicalDragPosition = { x: number; y: number; at: number };
 
-function elementAtPhysicalPosition(position: { x: number; y: number }): Element | null {
+function elementAtLogicalPosition(position: { x: number; y: number }): Element | null {
+  return document.elementFromPoint(position.x, position.y);
+}
+
+function elementAtNativeDragPosition(
+  position: { x: number; y: number },
+  lastLogicalPosition: LogicalDragPosition | null,
+): Element | null {
+  if (lastLogicalPosition && Date.now() - lastLogicalPosition.at < 250) {
+    return elementAtLogicalPosition(lastLogicalPosition);
+  }
+
+  const direct = elementAtLogicalPosition(position);
+  if (direct) return direct;
+
   const scale = window.devicePixelRatio || 1;
-  return document.elementFromPoint(position.x / scale, position.y / scale);
+  return elementAtLogicalPosition({ x: position.x / scale, y: position.y / scale });
 }
 
 function isInTerminal(el: Element | null, terminalContainer: HTMLElement): boolean {
@@ -43,6 +58,11 @@ export function setupDragDrop(
   onWorkspaceDrop: (path: string) => void,
 ) {
   let lastDrop: { zone: DropZone; path: string; at: number } | null = null;
+  let lastLogicalDragPosition: LogicalDragPosition | null = null;
+
+  document.addEventListener("dragover", (event: DragEvent) => {
+    lastLogicalDragPosition = { x: event.clientX, y: event.clientY, at: Date.now() };
+  }, true);
 
   function dispatchDrop(zone: DropZone | null, path: string | undefined) {
     if (!zone || !path) return;
@@ -122,7 +142,7 @@ export function setupDragDrop(
       }
 
       const zone = getDropZone(
-        elementAtPhysicalPosition(payload.position),
+        elementAtNativeDragPosition(payload.position, lastLogicalDragPosition),
         terminalContainer,
         workspaceListEl,
       );

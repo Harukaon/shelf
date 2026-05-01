@@ -5,18 +5,26 @@ import { TabInfo } from "../types";
 import { t } from "../i18n";
 
 export function flushTabBuffer(tab: TabInfo) {
-  for (const chunk of tab.dataBuffer) {
+  if (tab.dataBuffer.length === 0) return;
+  const chunks = tab.dataBuffer.splice(0);
+  for (const chunk of chunks) {
     tab.terminal.write(chunk);
   }
-  tab.dataBuffer.length = 0;
+}
+
+function resizePtyToTerminal(tab: TabInfo) {
+  if (!tab.pty || !tab.terminal) return;
+  const { cols, rows } = tab.terminal;
+  if (cols > 0 && rows > 0 && (tab.pty.cols !== cols || tab.pty.rows !== rows)) {
+    tab.pty.resize(cols, rows);
+  }
 }
 
 export function refitTerminal(tab: TabInfo) {
   if (!tab.fitAddon || !tab.terminal || !tab.pty || tab.containerEl.style.visibility === "hidden") return;
   try {
     tab.fitAddon.fit();
-    const { cols, rows } = tab.terminal;
-    if (cols > 0 && rows > 0) tab.pty.resize(cols, rows);
+    resizePtyToTerminal(tab);
   } catch (_) {
     /* ignore */
   }
@@ -123,8 +131,16 @@ export function createTerminalTab(
       if (tabInfo.active) {
         terminal.write(data);
       } else {
-        tabInfo.dataBuffer.push(data);
+        tabInfo.dataBuffer.push(data.slice());
       }
+    });
+    terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
+        onPtyWrite(tabId, "\x1b[13;2u");
+        event.preventDefault();
+        return false;
+      }
+      return true;
     });
     terminal.onData((data: string) => {
       onPtyWrite(tabId, data);
@@ -147,13 +163,11 @@ export function createTerminalTab(
   terminalContainer.appendChild(wrapper);
   tabInfo.containerEl = wrapper;
 
-  terminal.onResize(({ cols, rows }) => {
-    if (pty && cols > 0 && rows > 0) {
-      try {
-        pty.resize(cols, rows);
-      } catch (_) {
-        /* ignore */
-      }
+  terminal.onResize(() => {
+    try {
+      resizePtyToTerminal(tabInfo);
+    } catch (_) {
+      /* ignore */
     }
   });
 
