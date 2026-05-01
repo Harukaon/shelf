@@ -16,7 +16,10 @@
       "icons/128x128.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   },
   "app": {
     "withGlobalTauri": true,
