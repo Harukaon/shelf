@@ -119,19 +119,41 @@ pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
 #[tauri::command]
 pub fn detect_terminals() -> Result<serde_json::Value, String> {
     let mut shells: Vec<String> = vec![];
-    for shell_bin in &["zsh", "bash", "fish"] {
-        if std::process::Command::new("which")
-            .arg(shell_bin)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            shells.push(shell_bin.to_string());
+
+    #[cfg(target_os = "windows")]
+    {
+        for shell_bin in &["powershell", "cmd", "pwsh"] {
+            if std::process::Command::new("where")
+                .arg(shell_bin)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                shells.push(shell_bin.to_string());
+            }
+        }
+        if shells.is_empty() {
+            shells.push("powershell".to_string());
         }
     }
-    if shells.is_empty() {
-        shells.push("zsh".to_string());
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        for shell_bin in &["zsh", "bash", "fish"] {
+            if std::process::Command::new("which")
+                .arg(shell_bin)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                shells.push(shell_bin.to_string());
+            }
+        }
+        if shells.is_empty() {
+            shells.push("zsh".to_string());
+        }
     }
+
     Ok(serde_json::json!({ "shells": shells }))
 }
 
@@ -170,9 +192,19 @@ pub fn find_claude() -> Result<String, String> {
         }
     }
 
-    for shell in ["/bin/zsh", "/bin/bash", "/bin/sh"] {
-        if let Some(path) = find_claude_with_shell(shell) {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(path) = find_claude_with_shell("powershell") {
             return Ok(path);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        for shell in ["/bin/zsh", "/bin/bash", "/bin/sh"] {
+            if let Some(path) = find_claude_with_shell(shell) {
+                return Ok(path);
+            }
         }
     }
 
@@ -180,11 +212,28 @@ pub fn find_claude() -> Result<String, String> {
 }
 
 fn claude_candidates() -> Vec<PathBuf> {
-    let mut candidates = vec![
-        PathBuf::from("/opt/homebrew/bin/claude"),
-        PathBuf::from("/usr/local/bin/claude"),
-        PathBuf::from("/usr/bin/claude"),
-    ];
+    let mut candidates = vec![];
+
+    #[cfg(target_os = "windows")]
+    {
+        candidates.push(PathBuf::from("C:/Program Files/nodejs/claude.cmd"));
+        if let Some(home) = dirs::home_dir() {
+            candidates.extend([
+                home.join("AppData/Roaming/npm/claude.cmd"),
+                home.join(".local/bin/claude.exe"),
+                home.join("scoop/shims/claude.cmd"),
+            ]);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        candidates.extend([
+            PathBuf::from("/opt/homebrew/bin/claude"),
+            PathBuf::from("/usr/local/bin/claude"),
+            PathBuf::from("/usr/bin/claude"),
+        ]);
+    }
 
     if let Some(home) = dirs::home_dir() {
         candidates.extend([
@@ -194,8 +243,11 @@ fn claude_candidates() -> Vec<PathBuf> {
             home.join(".asdf/shims/claude"),
             home.join(".bun/bin/claude"),
             home.join(".npm-global/bin/claude"),
-            home.join("Library/pnpm/claude"),
         ]);
+
+        #[cfg(not(target_os = "windows"))]
+        candidates.push(home.join("Library/pnpm/claude"));
+
         candidates.extend(find_nvm_claude_bins(&home));
         candidates.extend(find_fnm_claude_bins(&home));
     }
@@ -209,7 +261,17 @@ fn find_nvm_claude_bins(home: &Path) -> Vec<PathBuf> {
 
 fn find_fnm_claude_bins(home: &Path) -> Vec<PathBuf> {
     let mut candidates = find_versioned_bin_candidates(&home.join(".fnm/node-versions"));
+
+    #[cfg(target_os = "macos")]
     candidates.extend(find_versioned_bin_candidates(&home.join("Library/Application Support/fnm/node-versions")));
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(local) = dirs::data_local_dir() {
+            candidates.extend(find_versioned_bin_candidates(&local.join("fnm/node-versions")));
+        }
+    }
+
     candidates
 }
 
@@ -222,12 +284,38 @@ fn find_versioned_bin_candidates(root: &Path) -> Vec<PathBuf> {
     for entry in entries.flatten() {
         let path = entry.path();
         candidates.push(path.join("bin/claude"));
+        #[cfg(target_os = "windows")]
+        {
+            candidates.push(path.join("bin/claude.cmd"));
+            candidates.push(path.join("Scripts/claude.exe"));
+        }
         candidates.extend(find_versioned_bin_candidates(&path));
     }
 
     candidates
 }
 
+#[cfg(target_os = "windows")]
+fn find_claude_with_shell(shell: &str) -> Option<String> {
+    let command = "Get-Command claude -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source";
+    let output = std::process::Command::new(shell)
+        .args(["-Command", command])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
 fn find_claude_with_shell(shell: &str) -> Option<String> {
     let command = r#"
         export NVM_DIR="$HOME/.nvm"
