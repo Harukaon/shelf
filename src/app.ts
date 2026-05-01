@@ -258,6 +258,7 @@ class App {
 
     this.ws.sessions.set(workspacePath, sessions);
     this._syncOpenTabsWithSessions(workspacePath, sessions);
+    this._linkPendingTabsFromSnapshot(workspacePath, sessions, oldSessions);
     this._syncActiveSessionIds();
     this._syncFocusedSessionId();
     this._renderTabs();
@@ -302,6 +303,19 @@ class App {
       if (tab.title !== session.display_title) {
         tab.title = session.display_title;
       }
+    }
+  }
+
+  private _linkPendingTabsFromSnapshot(workspacePath: string, sessions: Session[], oldSessions: Session[]) {
+    const oldIds = new Set(oldSessions.map((s) => s.id));
+    const newSessions = sessions.filter((s) => !oldIds.has(s.id));
+    if (newSessions.length === 0) return;
+
+    for (const [tabId, pending] of this.pendingClaudeTabs) {
+      if (pending.linkedSessionId) continue;
+      if (pending.workspacePath !== workspacePath) continue;
+      const match = this._findSessionForPendingClaude(pending, sessions);
+      if (match) this._linkPendingClaudeTab(tabId, pending, match);
     }
   }
 
