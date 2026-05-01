@@ -13,6 +13,8 @@ pub fn run() {
             app.manage(pty_plugin::PtyState::default());
             let window = app.get_webview_window("main").unwrap();
             window.set_title("Shelf").ok();
+            #[cfg(target_os = "windows")]
+            window.set_theme(Some(tauri::Theme::Dark)).ok();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
