@@ -136,7 +136,7 @@ fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
 }
 
 fn sanitize_path(path: &str) -> String {
-    path.replace('/', "-")
+    path.replace('/', "-").replace('\\', "-")
 }
 
 fn get_projects_dir() -> PathBuf {
