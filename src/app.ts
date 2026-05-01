@@ -81,6 +81,12 @@ class App {
     this.refreshBtn.addEventListener("click", () => this._refreshAllSessions());
     this.addWorkspaceBtn.addEventListener("click", () => this.ws.promptAdd());
 
+    // Window controls (custom title bar)
+    const win = getCurrentWebviewWindow();
+    document.getElementById("win-minimize")?.addEventListener("click", () => win.minimize());
+    document.getElementById("win-maximize")?.addEventListener("click", () => win.toggleMaximize());
+    document.getElementById("win-close")?.addEventListener("click", () => this._showQuitDialog());
+
     setupDragDrop(
       this.terminalContainer,
       this.workspaceList,

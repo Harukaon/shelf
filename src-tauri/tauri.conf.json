@@ -25,7 +25,8 @@
         "title": "Shelf",
         "width": 1200,
         "height": 800,
-        "resizable": true
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {
