@@ -44,7 +44,7 @@ html::-webkit-scrollbar-track, body::-webkit-scrollbar-track, #app::-webkit-scro
 #workspace-list::-webkit-scrollbar-track, #file-tree::-webkit-scrollbar-track,
 .picker-list::-webkit-scrollbar-track,
 .session-picker .picker-list::-webkit-scrollbar-track {
-  background: var(--bg-secondary);
+  background: transparent;
 }
 html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb, #app::-webkit-scrollbar-thumb,
 #workspace-list::-webkit-scrollbar-thumb, #file-tree::-webkit-scrollbar-thumb,
@@ -62,7 +62,7 @@ html::-webkit-scrollbar-corner, body::-webkit-scrollbar-corner, #app::-webkit-sc
 #workspace-list::-webkit-scrollbar-corner, #file-tree::-webkit-scrollbar-corner,
 .picker-list::-webkit-scrollbar-corner,
 .session-picker .picker-list::-webkit-scrollbar-corner {
-  background: var(--bg-secondary);
+  background: transparent;
 }
 
 html, body, #app {
