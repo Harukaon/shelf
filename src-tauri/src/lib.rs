@@ -9,6 +9,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             app.manage(pty_plugin::PtyState::default());
             let window = app.get_webview_window("main").unwrap();
