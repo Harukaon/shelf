@@ -2,7 +2,6 @@ import { FileEntry } from "../types";
 import { tauriInvoke, refreshIcons } from "../helpers";
 import { showContextMenu } from "./context-menu";
 import { t, getLang } from "../i18n";
-import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
 function showToast(msg: string) {
@@ -96,9 +95,6 @@ export async function renderFileTree(
       showContextMenu([
         { label: isMac ? t("context.reveal") : t("context.reveal_win"), action: async () => {
           try { await revealItemInDir(absPath); } catch (_) {}
-        }},
-        { label: t("context.open"), action: async () => {
-          try { await shellOpen(absPath); } catch (_) {}
         }},
         { label: t("context.copy_rel"), action: () => { navigator.clipboard.writeText(relPath); }},
         { label: t("context.copy_abs"), action: () => { navigator.clipboard.writeText(absPath); }},
