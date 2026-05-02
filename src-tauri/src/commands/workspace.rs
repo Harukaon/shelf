@@ -2,11 +2,28 @@ use crate::session::{ShelfConfig, Workspace};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 fn config_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".shelf")
         .join("config.json")
+}
+
+fn default_shell() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        "powershell".to_string()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "zsh".to_string()
+    }
 }
 
 fn load_config() -> ShelfConfig {
@@ -15,14 +32,14 @@ fn load_config() -> ShelfConfig {
         let content = fs::read_to_string(&path).unwrap_or_default();
         serde_json::from_str(&content).unwrap_or(ShelfConfig {
             workspaces: Vec::new(),
-            shell: "zsh".to_string(),
+            shell: default_shell(),
             language: "en".to_string(),
             pinned: Vec::new(),
         })
     } else {
         ShelfConfig {
             workspaces: Vec::new(),
-            shell: "zsh".to_string(),
+            shell: default_shell(),
             language: "en".to_string(),
             pinned: Vec::new(),
         }
@@ -122,9 +139,11 @@ pub fn detect_terminals() -> Result<serde_json::Value, String> {
 
     #[cfg(target_os = "windows")]
     {
+        let creation_no_window = CREATE_NO_WINDOW;
         for shell_bin in &["powershell", "cmd", "pwsh"] {
             if std::process::Command::new("where")
                 .arg(shell_bin)
+                .creation_flags(creation_no_window)
                 .output()
                 .map(|o| o.status.success())
                 .unwrap_or(false)
@@ -299,7 +318,8 @@ fn find_versioned_bin_candidates(root: &Path) -> Vec<PathBuf> {
 fn find_claude_with_shell(shell: &str) -> Option<String> {
     let command = "Get-Command claude -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source";
     let output = std::process::Command::new(shell)
-        .args(["-Command", command])
+        .args(["-NoProfile", "-Command", command])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
 

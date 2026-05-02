@@ -536,33 +536,7 @@ body[data-platform="macos"] #tab-list {
   margin-left: 72px;
 }
 
-/* Windows: custom window controls on the right */
+/* Window controls removed — using native title bar controls on all platforms */
 #window-controls {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  margin-left: 8px;
-  flex-shrink: 0;
-  height: 100%;
-}
-
-#window-controls button {
-  width: 46px;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background 0.1s, color 0.1s;
-}
-#window-controls button:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-#window-controls #win-close:hover {
-  background: #c42b1c;
-  color: #fff;
+  display: none;
 }

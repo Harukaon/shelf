@@ -1,4 +1,5 @@
 use crate::session::Session;
+use crate::session::scanner::sanitize_path;
 use std::fs;
 
 #[tauri::command]
@@ -15,7 +16,7 @@ pub fn create_session(workspace_path: String) -> Result<serde_json::Value, Strin
         .ok_or("Cannot find home directory")?
         .join(".claude")
         .join("projects");
-    let sanitized = workspace_path.replace('/', "-").replace('\\', "-");
+    let sanitized = sanitize_path(&workspace_path);
     let project_dir = projects_dir.join(&sanitized);
     fs::create_dir_all(&project_dir)
         .map_err(|e| format!("Cannot create project dir: {}", e))?;
