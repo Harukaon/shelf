@@ -5,7 +5,7 @@ import { tauriInvoke, refreshIcons, escapeHtml, formatDate } from "./helpers";
 import { Session, FileEntry, TabInfo } from "./types";
 import { TabManager } from "./modules/tabs";
 import { WorkspaceManager } from "./modules/workspace";
-import { createTerminalTab, repaintTerminal, writeToPty } from "./modules/terminal";
+import { createTerminalTab, repaintTerminal, scheduleTerminalRefit, writeToPty } from "./modules/terminal";
 import { renderFileTree, clearFileCache } from "./modules/files";
 import { setupDragDrop, setupPanelResize } from "./modules/dragdrop";
 import { t, setLang, getLang } from "./i18n";
@@ -98,7 +98,7 @@ class App {
 
     window.addEventListener("resize", () => {
       const tab = this.tabs.getActiveTab();
-      if (tab) repaintTerminal(tab);
+      if (tab) scheduleTerminalRefit(tab);
     });
 
     await this._loadSettings();

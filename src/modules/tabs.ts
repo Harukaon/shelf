@@ -59,6 +59,9 @@ export class TabManager {
       } catch (_) {}
     }
     if (tab.terminal) tab.terminal.dispose();
+    if (tab.resizeObserver) tab.resizeObserver.disconnect();
+    if (tab.resizeTimer) clearTimeout(tab.resizeTimer);
+    if (tab.resizeFrame) cancelAnimationFrame(tab.resizeFrame);
     tab.containerEl.remove();
     this.tabs.delete(tabId);
     if (this.activeTabId === tabId) {

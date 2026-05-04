@@ -75,10 +75,34 @@ html, body, #app {
   font-size: 13px;
 }
 
+body[data-platform="macos"] {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+}
+
+body[data-platform="windows"] {
+  font-family: "Segoe UI", sans-serif;
+}
+
 /* ─── Monospace for code/terminal contexts ─── */
-code, kbd, pre, .xterm, .terminal-wrapper,
+code, kbd, pre,
 .start-page-warning code, .start-page-hints kbd {
-  font-family: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", "Courier New", monospace;
+  font-family: ui-monospace, monospace;
+}
+
+body[data-platform="macos"] code,
+body[data-platform="macos"] kbd,
+body[data-platform="macos"] pre,
+body[data-platform="macos"] .start-page-warning code,
+body[data-platform="macos"] .start-page-hints kbd {
+  font-family: "SF Mono", Menlo, monospace;
+}
+
+body[data-platform="windows"] code,
+body[data-platform="windows"] kbd,
+body[data-platform="windows"] pre,
+body[data-platform="windows"] .start-page-warning code,
+body[data-platform="windows"] .start-page-hints kbd {
+  font-family: Consolas, "Courier New", monospace;
 }
 
 #app {

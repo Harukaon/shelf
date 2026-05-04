@@ -20,6 +20,29 @@ function resizePtyToTerminal(tab: TabInfo) {
   }
 }
 
+function terminalFontOptions() {
+  const platform = navigator.platform.toLowerCase();
+  if (platform.includes("mac")) {
+    return {
+      fontFamily: '"SF Mono", "Menlo", monospace',
+      fontWeight: 300,
+      fontWeightBold: 400,
+    };
+  }
+  if (platform.includes("win")) {
+    return {
+      fontFamily: '"Cascadia Mono", "Cascadia Code", "Consolas", monospace',
+      fontWeight: "normal" as const,
+      fontWeightBold: "bold" as const,
+    };
+  }
+  return {
+    fontFamily: '"JetBrains Mono", "Fira Code", "DejaVu Sans Mono", monospace',
+    fontWeight: "normal" as const,
+    fontWeightBold: "bold" as const,
+  };
+}
+
 export function refitTerminal(tab: TabInfo) {
   if (!tab.fitAddon || !tab.terminal || !tab.pty || tab.containerEl.style.visibility === "hidden") return;
   try {
@@ -30,12 +53,34 @@ export function refitTerminal(tab: TabInfo) {
   }
 }
 
+export function scheduleTerminalRefit(tab: TabInfo, delay = 80) {
+  if (!tab.terminal || tab.containerEl.style.visibility === "hidden") return;
+
+  if (tab.resizeTimer) clearTimeout(tab.resizeTimer);
+  if (tab.resizeFrame) cancelAnimationFrame(tab.resizeFrame);
+
+  tab.resizeTimer = setTimeout(() => {
+    tab.resizeFrame = requestAnimationFrame(() => {
+      tab.resizeFrame = undefined;
+      refitTerminal(tab);
+      try {
+        tab.terminal.clearTextureAtlas();
+        tab.terminal.refresh(0, tab.terminal.rows - 1);
+      } catch (_) {
+        /* ignore */
+      }
+    });
+    tab.resizeTimer = undefined;
+  }, delay);
+}
+
 export function repaintTerminal(tab: TabInfo) {
   if (!tab.terminal || tab.containerEl.style.visibility === "hidden") return;
-  requestAnimationFrame(() => {
+  if (tab.resizeFrame) cancelAnimationFrame(tab.resizeFrame);
+  tab.resizeFrame = requestAnimationFrame(() => {
+    tab.resizeFrame = undefined;
     try {
       refitTerminal(tab);
-      tab.terminal.refresh(0, tab.terminal.rows - 1);
       tab.terminal.focus();
     } catch (_) {
       /* ignore */
@@ -73,12 +118,11 @@ export function createTerminalTab(
   onPtyWrite: (tabId: string, data: string) => void,
   options?: { sessionId?: string; cwd?: string; workspacePath?: string; shell?: string; command?: { bin: string; args: string[] } },
 ): TabInfo {
+  const fontOptions = terminalFontOptions();
   const terminal = new Terminal({
     cursorBlink: true,
     fontSize: 13,
-    fontFamily: '"SF Mono", "Menlo", monospace',
-    fontWeight: 300,
-    fontWeightBold: 400,
+    ...fontOptions,
     drawBoldTextInBrightColors: false,
     theme: TERMINAL_THEME,
     allowProposedApi: true,
@@ -162,6 +206,11 @@ export function createTerminalTab(
   terminal.open(wrapper);
   terminalContainer.appendChild(wrapper);
   tabInfo.containerEl = wrapper;
+
+  tabInfo.resizeObserver = new ResizeObserver(() => {
+    scheduleTerminalRefit(tabInfo);
+  });
+  tabInfo.resizeObserver.observe(wrapper);
 
   terminal.onResize(() => {
     try {
