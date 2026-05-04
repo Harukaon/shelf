@@ -5,8 +5,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": "node scripts/package-runner.mjs dev",
+    "beforeBuildCommand": "node scripts/package-runner.mjs build"
   },
   "bundle": {
     "active": true,

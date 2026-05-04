@@ -194,15 +194,6 @@ class App {
     const isMac = platform.includes("mac");
     document.body.setAttribute("data-platform", isMac ? "macos" : "windows");
 
-    if (!isMac) {
-      const controls = document.getElementById("window-controls");
-      if (controls) controls.style.display = "flex";
-      const win = getCurrentWebviewWindow();
-      document.getElementById("win-minimize")?.addEventListener("click", () => win.minimize());
-      document.getElementById("win-maximize")?.addEventListener("click", () => win.toggleMaximize());
-      document.getElementById("win-close")?.addEventListener("click", () => this._showQuitDialog());
-    }
-
     // startDragging() API — data-tauri-drag-region is unreliable with overlay title bar
     const tabBar = document.getElementById("tab-bar")!;
     const win = getCurrentWebviewWindow();
