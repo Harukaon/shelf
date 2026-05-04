@@ -181,13 +181,13 @@ i[data-lucide] {
 #settings-btn {
   width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
-  background: transparent; color: var(--red);
+  background: var(--red); color: var(--bg-primary);
   border: 1px solid var(--red); border-radius: 10px;
   cursor: pointer; margin-left: 4px; flex-shrink: 0;
   font-size: 13px;
-  transition: color 0.15s, border-color 0.15s;
+  transition: filter 0.15s, border-color 0.15s;
 }
-#settings-btn:hover { color: var(--accent); border-color: var(--accent); }
+#settings-btn:hover { filter: brightness(1.08); border-color: var(--red); }
 
 /* ─── Main Layout ─── */
 #main-content { display: flex; flex: 1; overflow: hidden; }
