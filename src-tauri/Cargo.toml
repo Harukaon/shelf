@@ -24,4 +24,4 @@ dirs = "5"
 portable-pty = "0.8"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+windows-sys = { version = "0.61", features = ["Wdk_System_SystemServices", "Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging"] }
