@@ -181,8 +181,8 @@ i[data-lucide] {
 #settings-btn {
   width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
-  background: transparent; color: var(--text-muted);
-  border: 1px solid var(--border); border-radius: 10px;
+  background: transparent; color: var(--red);
+  border: 1px solid var(--red); border-radius: 10px;
   cursor: pointer; margin-left: 4px; flex-shrink: 0;
   font-size: 13px;
   transition: color 0.15s, border-color 0.15s;
