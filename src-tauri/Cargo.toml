@@ -22,3 +22,6 @@ uuid = { version = "1", features = ["v4"] }
 trash = "5"
 dirs = "5"
 portable-pty = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }

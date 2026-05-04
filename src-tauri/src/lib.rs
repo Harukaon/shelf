@@ -4,6 +4,39 @@ mod commands;
 mod pty_plugin;
 mod session;
 
+#[cfg(target_os = "windows")]
+fn apply_windows_title_bar_colors(window: &tauri::WebviewWindow) {
+    use std::ffi::c_void;
+    use windows_sys::Win32::Foundation::COLORREF;
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+    };
+
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+
+    let set_color = |attribute, color: COLORREF| {
+        let _ = unsafe {
+            DwmSetWindowAttribute(
+                hwnd.0,
+                attribute,
+                &color as *const COLORREF as *const c_void,
+                std::mem::size_of::<COLORREF>() as u32,
+            )
+        };
+    };
+
+    set_color(DWMWA_CAPTION_COLOR as u32, rgb(0x28, 0x2c, 0x34));
+    set_color(DWMWA_TEXT_COLOR as u32, rgb(0xe0, 0xe0, 0xe1));
+    set_color(DWMWA_BORDER_COLOR as u32, rgb(0x34, 0x3b, 0x49));
+}
+
+#[cfg(target_os = "windows")]
+const fn rgb(red: u32, green: u32, blue: u32) -> windows_sys::Win32::Foundation::COLORREF {
+    red | (green << 8) | (blue << 16)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -15,7 +48,10 @@ pub fn run() {
             let window = app.get_webview_window("main").unwrap();
             window.set_title("Shelf").ok();
             #[cfg(target_os = "windows")]
-            window.set_theme(Some(tauri::Theme::Dark)).ok();
+            {
+                window.set_theme(Some(tauri::Theme::Dark)).ok();
+                apply_windows_title_bar_colors(&window);
+            }
             let _ = window.set_title_bar_style(tauri::TitleBarStyle::Overlay);
             Ok(())
         })
