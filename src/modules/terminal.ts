@@ -12,14 +12,6 @@ export function flushTabBuffer(tab: TabInfo) {
   }
 }
 
-function resizePtyToTerminal(tab: TabInfo) {
-  if (!tab.pty || !tab.terminal) return;
-  const { cols, rows } = tab.terminal;
-  if (cols > 0 && rows > 0 && (tab.pty.cols !== cols || tab.pty.rows !== rows)) {
-    tab.pty.resize(cols, rows);
-  }
-}
-
 function terminalFontOptions() {
   const platform = navigator.platform.toLowerCase();
   if (platform.includes("mac")) {
@@ -43,31 +35,40 @@ function terminalFontOptions() {
   };
 }
 
+function terminalPixelSize(tab: TabInfo) {
+  const dimensions = (tab.terminal as any)?._core?._renderService?.dimensions?.css?.canvas;
+  if (dimensions?.width > 0 && dimensions?.height > 0) {
+    return {
+      width: Math.min(65535, Math.round(dimensions.width)),
+      height: Math.min(65535, Math.round(dimensions.height)),
+    };
+  }
+
+  const screen = tab.terminal.element?.querySelector(".xterm-screen") as HTMLElement | null;
+  const bounds = screen?.getBoundingClientRect() || tab.containerEl.getBoundingClientRect();
+  return {
+    width: Math.min(65535, Math.round(bounds.width)),
+    height: Math.min(65535, Math.round(bounds.height)),
+  };
+}
+
+function schedulePtyResize(tab: TabInfo, cols = tab.terminal.cols, rows = tab.terminal.rows) {
+  if (!tab.pty || !tab.terminal || cols <= 0 || rows <= 0) return;
+  if (tab.ptyResizeTimer) clearTimeout(tab.ptyResizeTimer);
+  tab.ptyResizeTimer = setTimeout(() => {
+    tab.ptyResizeTimer = undefined;
+    if (!tab.pty || !tab.terminal) return;
+    const pixels = terminalPixelSize(tab);
+    tab.pty.resize(cols, rows, pixels.width, pixels.height);
+  }, 100);
+}
+
 export function refitTerminal(tab: TabInfo) {
   if (!tab.fitAddon || !tab.terminal || !tab.pty || tab.containerEl.style.visibility === "hidden") return;
   const bounds = tab.containerEl.getBoundingClientRect();
   if (bounds.width <= 0 || bounds.height <= 0) return;
   try {
     tab.fitAddon.fit();
-    resizePtyToTerminal(tab);
-  } catch (_) {
-    /* ignore */
-  }
-}
-
-function forceTerminalRefresh(tab: TabInfo) {
-  if (!tab.terminal) return;
-  try {
-    (tab.terminal as any)._core?._renderService?.clear?.();
-  } catch (_) {
-    /* ignore */
-  }
-  try {
-    tab.terminal.clearTextureAtlas();
-  } catch (_) {
-    /* ignore */
-  }
-  try {
     tab.terminal.refresh(0, Math.max(0, tab.terminal.rows - 1));
   } catch (_) {
     /* ignore */
@@ -90,7 +91,6 @@ export function scheduleTerminalRefit(tab: TabInfo, delay = 80) {
     tab.resizeFinalFrame = requestAnimationFrame(() => {
       tab.resizeFinalFrame = undefined;
       refitTerminal(tab);
-      forceTerminalRefresh(tab);
     });
     tab.resizeTimer = undefined;
   }, delay);
@@ -236,7 +236,7 @@ export function createTerminalTab(
 
   terminal.onResize(() => {
     try {
-      resizePtyToTerminal(tabInfo);
+      schedulePtyResize(tabInfo);
     } catch (_) {
       /* ignore */
     }

@@ -22,7 +22,7 @@ export interface IPty {
   handleFlowControl: boolean;
   readonly onData: (listener: (e: Uint8Array) => void) => IDisposable;
   readonly onExit: (listener: (e: { exitCode: number; signal?: number }) => void) => IDisposable;
-  resize(columns: number, rows: number): void;
+  resize(columns: number, rows: number, pixelWidth?: number, pixelHeight?: number): void;
   clear(): void;
   write(data: string): void;
   kill(signal?: string): void;
@@ -92,11 +92,12 @@ class Pty implements IPty {
     });
   }
 
-  resize(cols: number, rows: number): void {
+  resize(cols: number, rows: number, pixelWidth?: number, pixelHeight?: number): void {
+    if (this.cols === cols && this.rows === rows) return;
     this.cols = cols;
     this.rows = rows;
     this._init.then(() =>
-      invoke("pty_resize", { pid: this.pid, cols, rows }).catch((e) =>
+      invoke("pty_resize", { pid: this.pid, cols, rows, pixelWidth, pixelHeight }).catch((e) =>
         console.error("Resize error:", e)
       )
     );

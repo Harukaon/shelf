@@ -38,6 +38,7 @@ export interface TabInfo {
   dataBuffer: Uint8Array[];
   active: boolean;
   resizeTimer?: ReturnType<typeof setTimeout>;
+  ptyResizeTimer?: ReturnType<typeof setTimeout>;
   resizeFrame?: number;
   resizeFinalFrame?: number;
   resizeObserver?: ResizeObserver;

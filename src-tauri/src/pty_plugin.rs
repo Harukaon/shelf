@@ -176,6 +176,8 @@ pub async fn pty_resize(
     pid: u32,
     cols: u16,
     rows: u16,
+    pixel_width: Option<u16>,
+    pixel_height: Option<u16>,
     state: tauri::State<'_, PtyState>,
 ) -> Result<(), String> {
     let session = state
@@ -192,8 +194,8 @@ pub async fn pty_resize(
         .resize(PtySize {
             rows,
             cols,
-            pixel_width: 0,
-            pixel_height: 0,
+            pixel_width: pixel_width.unwrap_or(0),
+            pixel_height: pixel_height.unwrap_or(0),
         })
         .map_err(|e| e.to_string())?;
     Ok(())

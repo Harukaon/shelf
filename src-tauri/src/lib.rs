@@ -10,6 +10,7 @@ fn apply_windows_title_bar_colors(window: &tauri::WebviewWindow) {
     use windows_sys::Win32::Foundation::COLORREF;
     use windows_sys::Win32::Graphics::Dwm::{
         DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+        DWMWA_USE_IMMERSIVE_DARK_MODE,
     };
 
     let Ok(hwnd) = window.hwnd() else {
@@ -27,9 +28,19 @@ fn apply_windows_title_bar_colors(window: &tauri::WebviewWindow) {
         };
     };
 
-    set_color(DWMWA_CAPTION_COLOR as u32, rgb(0x28, 0x2c, 0x34));
+    let dark_mode = 0i32;
+    let _ = unsafe {
+        DwmSetWindowAttribute(
+            hwnd.0,
+            DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+            &dark_mode as *const i32 as *const c_void,
+            std::mem::size_of::<i32>() as u32,
+        )
+    };
+
+    set_color(DWMWA_CAPTION_COLOR as u32, rgb(0x3a, 0x42, 0x50));
     set_color(DWMWA_TEXT_COLOR as u32, rgb(0xe0, 0xe0, 0xe1));
-    set_color(DWMWA_BORDER_COLOR as u32, rgb(0x34, 0x3b, 0x49));
+    set_color(DWMWA_BORDER_COLOR as u32, rgb(0x4a, 0x54, 0x66));
 }
 
 #[cfg(target_os = "windows")]
@@ -49,9 +60,10 @@ pub fn run() {
             window.set_title("Shelf").ok();
             #[cfg(target_os = "windows")]
             {
-                window.set_theme(Some(tauri::Theme::Dark)).ok();
+                window.set_theme(Some(tauri::Theme::Light)).ok();
                 apply_windows_title_bar_colors(&window);
             }
+            #[cfg(target_os = "macos")]
             let _ = window.set_title_bar_style(tauri::TitleBarStyle::Overlay);
             Ok(())
         })
