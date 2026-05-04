@@ -39,5 +39,6 @@ export interface TabInfo {
   active: boolean;
   resizeTimer?: ReturnType<typeof setTimeout>;
   resizeFrame?: number;
+  resizeFinalFrame?: number;
   resizeObserver?: ResizeObserver;
 }

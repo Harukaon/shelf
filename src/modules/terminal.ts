@@ -45,6 +45,8 @@ function terminalFontOptions() {
 
 export function refitTerminal(tab: TabInfo) {
   if (!tab.fitAddon || !tab.terminal || !tab.pty || tab.containerEl.style.visibility === "hidden") return;
+  const bounds = tab.containerEl.getBoundingClientRect();
+  if (bounds.width <= 0 || bounds.height <= 0) return;
   try {
     tab.fitAddon.fit();
     resizePtyToTerminal(tab);
@@ -53,22 +55,42 @@ export function refitTerminal(tab: TabInfo) {
   }
 }
 
+function forceTerminalRefresh(tab: TabInfo) {
+  if (!tab.terminal) return;
+  try {
+    (tab.terminal as any)._core?._renderService?.clear?.();
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    tab.terminal.clearTextureAtlas();
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    tab.terminal.refresh(0, Math.max(0, tab.terminal.rows - 1));
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 export function scheduleTerminalRefit(tab: TabInfo, delay = 80) {
   if (!tab.terminal || tab.containerEl.style.visibility === "hidden") return;
 
-  if (tab.resizeTimer) clearTimeout(tab.resizeTimer);
-  if (tab.resizeFrame) cancelAnimationFrame(tab.resizeFrame);
-
-  tab.resizeTimer = setTimeout(() => {
+  if (!tab.resizeFrame) {
     tab.resizeFrame = requestAnimationFrame(() => {
       tab.resizeFrame = undefined;
       refitTerminal(tab);
-      try {
-        tab.terminal.clearTextureAtlas();
-        tab.terminal.refresh(0, tab.terminal.rows - 1);
-      } catch (_) {
-        /* ignore */
-      }
+    });
+  }
+
+  if (tab.resizeTimer) clearTimeout(tab.resizeTimer);
+  if (tab.resizeFinalFrame) cancelAnimationFrame(tab.resizeFinalFrame);
+  tab.resizeTimer = setTimeout(() => {
+    tab.resizeFinalFrame = requestAnimationFrame(() => {
+      tab.resizeFinalFrame = undefined;
+      refitTerminal(tab);
+      forceTerminalRefresh(tab);
     });
     tab.resizeTimer = undefined;
   }, delay);
@@ -202,7 +224,7 @@ export function createTerminalTab(
   const wrapper = document.createElement("div");
   wrapper.className = "terminal-wrapper";
   wrapper.dataset.tabId = tabId;
-  wrapper.style.cssText = "width:100%;height:100%;visibility:hidden;pointer-events:none;";
+  wrapper.style.cssText = "visibility:hidden;pointer-events:none;";
   terminal.open(wrapper);
   terminalContainer.appendChild(wrapper);
   tabInfo.containerEl = wrapper;

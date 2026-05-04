@@ -140,7 +140,7 @@ class App {
     const container = document.createElement("div");
     container.className = "terminal-wrapper start-page";
     container.dataset.tabId = START_TAB_ID;
-    container.style.cssText = `width:100%;height:100%;visibility:${shouldActivateStart ? "visible" : "hidden"};pointer-events:${shouldActivateStart ? "auto" : "none"};`;
+    container.style.cssText = `visibility:${shouldActivateStart ? "visible" : "hidden"};pointer-events:${shouldActivateStart ? "auto" : "none"};`;
     container.innerHTML = `
       <div class="start-page-content">
         <div class="start-page-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="48" height="48"><defs><linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#89B4FA"/><stop offset="100%" stop-color="#74C7EC"/></linearGradient></defs><rect x="16" y="16" width="480" height="480" rx="108" fill="#1E1E2E"/><text x="100" y="320" font-family="SF Mono, Menlo, monospace" font-size="260" font-weight="700" fill="url(#g1)">&gt;_</text><rect x="100" y="370" width="312" height="10" rx="5" fill="#45475A" opacity="0.6"/><rect x="140" y="400" width="232" height="10" rx="5" fill="#45475A" opacity="0.4"/><rect x="170" y="430" width="172" height="10" rx="5" fill="#45475A" opacity="0.25"/></svg></div>

@@ -62,6 +62,7 @@ export class TabManager {
     if (tab.resizeObserver) tab.resizeObserver.disconnect();
     if (tab.resizeTimer) clearTimeout(tab.resizeTimer);
     if (tab.resizeFrame) cancelAnimationFrame(tab.resizeFrame);
+    if (tab.resizeFinalFrame) cancelAnimationFrame(tab.resizeFinalFrame);
     tab.containerEl.remove();
     this.tabs.delete(tabId);
     if (this.activeTabId === tabId) {
