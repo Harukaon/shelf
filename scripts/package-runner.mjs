@@ -22,20 +22,35 @@ const commandExists = (command) => {
   }).status === 0;
 };
 
-const packageManager = commandExists("pnpm") ? "pnpm" : "npm";
+const packageManager = existsSync(path.join(repoRoot, "pnpm-lock.yaml"))
+  ? "pnpm"
+  : existsSync(path.join(repoRoot, "package-lock.json"))
+    ? "npm"
+    : commandExists("pnpm")
+      ? "pnpm"
+      : "npm";
 const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const dependencies = {
   ...packageJson.dependencies,
   ...packageJson.devDependencies,
 };
 
-const missingDependencies = Object.keys(dependencies).filter((name) => {
+const packagesToInstall = Object.entries(dependencies).filter(([name, versionRange]) => {
   const packagePath = path.join(repoRoot, "node_modules", ...name.split("/"), "package.json");
-  return !existsSync(packagePath);
+  if (!existsSync(packagePath)) {
+    return true;
+  }
+
+  if (!/^\d+\.\d+\.\d+$/.test(versionRange)) {
+    return false;
+  }
+
+  const installedPackage = JSON.parse(readFileSync(packagePath, "utf8"));
+  return installedPackage.version !== versionRange;
 });
 
-if (missingDependencies.length > 0) {
-  console.log(`Installing missing dependencies with ${packageManager}: ${missingDependencies.join(", ")}`);
+if (packagesToInstall.length > 0) {
+  console.log(`Installing dependencies with ${packageManager}: ${packagesToInstall.map(([name]) => name).join(", ")}`);
   const install = spawnSync(packageManager, ["install"], {
     cwd: repoRoot,
     stdio: "inherit",
