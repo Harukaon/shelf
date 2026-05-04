@@ -28,7 +28,7 @@ fn apply_windows_title_bar_colors(window: &tauri::WebviewWindow) {
         };
     };
 
-    let dark_mode = 0i32;
+    let dark_mode = 1i32;
     let _ = unsafe {
         DwmSetWindowAttribute(
             hwnd.0,
@@ -38,7 +38,7 @@ fn apply_windows_title_bar_colors(window: &tauri::WebviewWindow) {
         )
     };
 
-    set_color(DWMWA_CAPTION_COLOR as u32, rgb(0x3a, 0x42, 0x50));
+    set_color(DWMWA_CAPTION_COLOR as u32, rgb(0x34, 0x3b, 0x49));
     set_color(DWMWA_TEXT_COLOR as u32, rgb(0xe0, 0xe0, 0xe1));
     set_color(DWMWA_BORDER_COLOR as u32, rgb(0x4a, 0x54, 0x66));
 }
@@ -60,7 +60,7 @@ pub fn run() {
             window.set_title("Shelf").ok();
             #[cfg(target_os = "windows")]
             {
-                window.set_theme(Some(tauri::Theme::Light)).ok();
+                window.set_theme(Some(tauri::Theme::Dark)).ok();
                 apply_windows_title_bar_colors(&window);
             }
             #[cfg(target_os = "macos")]
