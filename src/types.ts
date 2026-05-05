@@ -41,6 +41,9 @@ export interface TabInfo {
   writeFrame?: number;
   writeStartedAt?: number;
   lastUserInputAt?: number;
+  syncUpdateMode?: boolean;
+  syncUpdateBuffer?: Uint8Array[];
+  syncSequenceRemainder?: Uint8Array;
   resizeTimer?: ReturnType<typeof setTimeout>;
   ptyResizeTimer?: ReturnType<typeof setTimeout>;
   resizeFrame?: number;

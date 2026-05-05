@@ -7,6 +7,8 @@ import { t } from "../i18n";
 const TERMINAL_WRITE_QUIET_MS = 16;
 const TERMINAL_WRITE_MAX_WAIT_MS = 120;
 const TERMINAL_DEBUG = localStorage.getItem("shelf:terminal-debug") !== "0";
+const SYNC_UPDATE_START = "\x1b[?2026h";
+const SYNC_UPDATE_END = "\x1b[?2026l";
 
 export function flushTabBuffer(tab: TabInfo) {
   if (tab.dataBuffer.length === 0) return;
@@ -32,6 +34,49 @@ export function flushTabBuffer(tab: TabInfo) {
 }
 
 function writeTerminalData(tab: TabInfo, data: Uint8Array) {
+  const segments = splitSyncUpdateSequences(tab, data);
+  for (const segment of segments) {
+    if (segment.type === "start") {
+      tab.syncUpdateMode = true;
+      if (TERMINAL_DEBUG) {
+        console.log("[TerminalDebug] sync update start", { tabId: tab.id });
+      }
+      continue;
+    }
+    if (segment.type === "end") {
+      if (TERMINAL_DEBUG) {
+        console.log("[TerminalDebug] sync update end", {
+          tabId: tab.id,
+          bufferedChunks: tab.syncUpdateBuffer?.length || 0,
+          bufferedBytes: (tab.syncUpdateBuffer || []).reduce((sum, chunk) => sum + chunk.length, 0),
+        });
+      }
+      tab.syncUpdateMode = false;
+      const buffered = tab.syncUpdateBuffer?.splice(0) || [];
+      for (const chunk of buffered) {
+        queueTerminalChunk(tab, chunk);
+      }
+      continue;
+    }
+    if (segment.data.length === 0) continue;
+    if (tab.syncUpdateMode) {
+      if (!tab.syncUpdateBuffer) tab.syncUpdateBuffer = [];
+      tab.syncUpdateBuffer.push(segment.data);
+      if (TERMINAL_DEBUG) {
+        console.log("[TerminalDebug] sync update buffer", {
+          tabId: tab.id,
+          bytes: segment.data.length,
+          bufferedChunks: tab.syncUpdateBuffer.length,
+          bufferedBytes: tab.syncUpdateBuffer.reduce((sum, chunk) => sum + chunk.length, 0),
+        });
+      }
+      continue;
+    }
+    queueTerminalChunk(tab, segment.data);
+  }
+}
+
+function queueTerminalChunk(tab: TabInfo, data: Uint8Array) {
   tab.dataBuffer.push(data.slice());
   if (!tab.writeStartedAt) tab.writeStartedAt = performance.now();
   const ansiHints = scanAnsiHints(data);
@@ -43,9 +88,55 @@ function writeTerminalData(tab: TabInfo, data: Uint8Array) {
       bufferedBytes: tab.dataBuffer.reduce((sum, chunk) => sum + chunk.length, 0),
       sinceInputMs: tab.lastUserInputAt ? Math.round(performance.now() - tab.lastUserInputAt) : null,
       ansiHints,
+      syncUpdateMode: !!tab.syncUpdateMode,
     });
   }
   scheduleTerminalWrite(tab);
+}
+
+function splitSyncUpdateSequences(tab: TabInfo, data: Uint8Array) {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const prefix = tab.syncSequenceRemainder ? decoder.decode(tab.syncSequenceRemainder) : "";
+  const text = prefix + decoder.decode(data);
+  const segments: Array<{ type: "data" | "start" | "end"; data: Uint8Array }> = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const startIndex = text.indexOf(SYNC_UPDATE_START, cursor);
+    const endIndex = text.indexOf(SYNC_UPDATE_END, cursor);
+    let nextIndex = -1;
+    let nextType: "start" | "end" | null = null;
+    if (startIndex !== -1 && (endIndex === -1 || startIndex < endIndex)) {
+      nextIndex = startIndex;
+      nextType = "start";
+    } else if (endIndex !== -1) {
+      nextIndex = endIndex;
+      nextType = "end";
+    }
+    if (nextIndex === -1 || !nextType) break;
+    if (nextIndex > cursor) {
+      segments.push({ type: "data", data: encoder.encode(text.slice(cursor, nextIndex)) });
+    }
+    segments.push({ type: nextType, data: new Uint8Array() });
+    cursor = nextIndex + (nextType === "start" ? SYNC_UPDATE_START.length : SYNC_UPDATE_END.length);
+  }
+  let remainder = text.slice(cursor);
+  const escapeIndex = remainder.lastIndexOf("\x1b[?2026");
+  if (escapeIndex !== -1) {
+    const partial = remainder.slice(escapeIndex);
+    if (SYNC_UPDATE_START.startsWith(partial) || SYNC_UPDATE_END.startsWith(partial)) {
+      remainder = remainder.slice(0, escapeIndex);
+      tab.syncSequenceRemainder = encoder.encode(partial);
+    } else {
+      tab.syncSequenceRemainder = undefined;
+    }
+  } else {
+    tab.syncSequenceRemainder = undefined;
+  }
+  if (remainder.length > 0) {
+    segments.push({ type: "data", data: encoder.encode(remainder) });
+  }
+  return segments;
 }
 
 function scheduleTerminalWrite(tab: TabInfo) {
