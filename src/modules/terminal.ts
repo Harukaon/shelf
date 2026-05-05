@@ -6,11 +6,13 @@ import { t } from "../i18n";
 
 const TERMINAL_WRITE_QUIET_MS = 16;
 const TERMINAL_WRITE_MAX_WAIT_MS = 120;
-const TERMINAL_DEBUG_MODE = localStorage.getItem("shelf:terminal-debug") || "core";
+const TERMINAL_DEBUG_MODE = localStorage.getItem("shelf:terminal-debug") || "0";
 const TERMINAL_DEBUG = TERMINAL_DEBUG_MODE !== "0";
 const TERMINAL_VERBOSE_DEBUG = TERMINAL_DEBUG_MODE === "1" || TERMINAL_DEBUG_MODE === "verbose";
 const SYNC_UPDATE_START = "\x1b[?2026h";
 const SYNC_UPDATE_END = "\x1b[?2026l";
+const SYNC_UPDATE_START_BYTES = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x68]);
+const SYNC_UPDATE_END_BYTES = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x6c]);
 
 export function flushTabBuffer(tab: TabInfo) {
   if (tab.dataBuffer.length === 0) return;
@@ -55,8 +57,13 @@ function writeTerminalData(tab: TabInfo, data: Uint8Array) {
       }
       tab.syncUpdateMode = false;
       const buffered = tab.syncUpdateBuffer?.splice(0) || [];
-      for (const chunk of buffered) {
-        queueTerminalChunk(tab, chunk);
+      if (buffered.length > 0) {
+        queueTerminalChunk(tab, concatUint8Arrays(buffered));
+        if (tab.writeTimer) {
+          clearTimeout(tab.writeTimer);
+          tab.writeTimer = undefined;
+        }
+        flushTerminalWrite(tab);
       }
       continue;
     }
@@ -102,47 +109,81 @@ function ensureUint8Array(data: Uint8Array | number[] | ArrayBuffer) {
   return Uint8Array.from(data);
 }
 
+function concatUint8Arrays(chunks: Uint8Array[]) {
+  if (chunks.length === 0) return new Uint8Array();
+  if (chunks.length === 1) return chunks[0].slice();
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+function matchesSequence(data: Uint8Array, offset: number, sequence: Uint8Array) {
+  if (offset + sequence.length > data.length) return false;
+  for (let i = 0; i < sequence.length; i++) {
+    if (data[offset + i] !== sequence[i]) return false;
+  }
+  return true;
+}
+
+function findSyncSequenceRemainderLength(data: Uint8Array) {
+  const maxLength = Math.min(SYNC_UPDATE_START_BYTES.length - 1, data.length);
+  for (let len = maxLength; len > 0; len--) {
+    let startMatch = true;
+    let endMatch = true;
+    for (let i = 0; i < len; i++) {
+      const value = data[data.length - len + i];
+      if (value !== SYNC_UPDATE_START_BYTES[i]) startMatch = false;
+      if (value !== SYNC_UPDATE_END_BYTES[i]) endMatch = false;
+      if (!startMatch && !endMatch) break;
+    }
+    if (startMatch || endMatch) return len;
+  }
+  return 0;
+}
+
 function splitSyncUpdateSequences(tab: TabInfo, data: Uint8Array) {
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  const prefix = tab.syncSequenceRemainder ? decoder.decode(tab.syncSequenceRemainder) : "";
-  const text = prefix + decoder.decode(data);
+  const text = tab.syncSequenceRemainder
+    ? concatUint8Arrays([tab.syncSequenceRemainder, data])
+    : data;
   const segments: Array<{ type: "data" | "start" | "end"; data: Uint8Array }> = [];
   let cursor = 0;
-  while (cursor < text.length) {
-    const startIndex = text.indexOf(SYNC_UPDATE_START, cursor);
-    const endIndex = text.indexOf(SYNC_UPDATE_END, cursor);
-    let nextIndex = -1;
+  let offset = 0;
+  while (offset < text.length) {
     let nextType: "start" | "end" | null = null;
-    if (startIndex !== -1 && (endIndex === -1 || startIndex < endIndex)) {
-      nextIndex = startIndex;
+    let nextLength = 0;
+    if (matchesSequence(text, offset, SYNC_UPDATE_START_BYTES)) {
       nextType = "start";
-    } else if (endIndex !== -1) {
-      nextIndex = endIndex;
+      nextLength = SYNC_UPDATE_START_BYTES.length;
+    } else if (matchesSequence(text, offset, SYNC_UPDATE_END_BYTES)) {
       nextType = "end";
+      nextLength = SYNC_UPDATE_END_BYTES.length;
     }
-    if (nextIndex === -1 || !nextType) break;
-    if (nextIndex > cursor) {
-      segments.push({ type: "data", data: encoder.encode(text.slice(cursor, nextIndex)) });
+    if (!nextType) {
+      offset++;
+      continue;
+    }
+    if (offset > cursor) {
+      segments.push({ type: "data", data: text.slice(cursor, offset) });
     }
     segments.push({ type: nextType, data: new Uint8Array() });
-    cursor = nextIndex + (nextType === "start" ? SYNC_UPDATE_START.length : SYNC_UPDATE_END.length);
+    offset += nextLength;
+    cursor = offset;
   }
-  let remainder = text.slice(cursor);
-  const escapeIndex = remainder.lastIndexOf("\x1b[?2026");
-  if (escapeIndex !== -1) {
-    const partial = remainder.slice(escapeIndex);
-    if (SYNC_UPDATE_START.startsWith(partial) || SYNC_UPDATE_END.startsWith(partial)) {
-      remainder = remainder.slice(0, escapeIndex);
-      tab.syncSequenceRemainder = encoder.encode(partial);
-    } else {
-      tab.syncSequenceRemainder = undefined;
-    }
+  let remainder = text.subarray(cursor);
+  const remainderLength = findSyncSequenceRemainderLength(remainder);
+  if (remainderLength > 0) {
+    tab.syncSequenceRemainder = remainder.slice(remainder.length - remainderLength);
+    remainder = remainder.slice(0, remainder.length - remainderLength);
   } else {
     tab.syncSequenceRemainder = undefined;
   }
   if (remainder.length > 0) {
-    segments.push({ type: "data", data: encoder.encode(remainder) });
+    segments.push({ type: "data", data: remainder.slice() });
   }
   return segments;
 }
