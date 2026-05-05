@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     ffi::OsString,
+    io::ErrorKind,
     sync::{
         atomic::{AtomicBool, AtomicU32, Ordering},
         Arc, Mutex,
@@ -9,6 +10,9 @@ use std::{
 
 use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use tauri::{async_runtime::RwLock, AppHandle, Runtime};
+
+const PTY_READ_BUFFER_BYTES: usize = 64 * 1024;
+const PTY_READ_DRAIN_PASSES: usize = 16;
 
 #[derive(Default)]
 pub struct PtyState {
@@ -152,13 +156,28 @@ pub async fn pty_read(pid: u32, state: tauri::State<'_, PtyState>) -> Result<Vec
     let read_session = session.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let mut reader = read_session.reader.lock().map_err(|e| e.to_string())?;
-        let mut buf = vec![0u8; 4096];
+        let mut buf = vec![0u8; PTY_READ_BUFFER_BYTES];
         let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
         if n == 0 {
             Err(String::from("EOF"))
         } else {
-            drop(reader);
             buf.truncate(n);
+            for _ in 0..PTY_READ_DRAIN_PASSES {
+                let mut extra = vec![0u8; PTY_READ_BUFFER_BYTES];
+                match reader.read(&mut extra) {
+                    Ok(0) => break,
+                    Ok(extra_n) => {
+                        extra.truncate(extra_n);
+                        buf.extend_from_slice(&extra);
+                        if extra_n < PTY_READ_BUFFER_BYTES {
+                            break;
+                        }
+                    }
+                    Err(err) if err.kind() == ErrorKind::WouldBlock => break,
+                    Err(err) => return Err(err.to_string()),
+                }
+            }
+            drop(reader);
             Ok(buf)
         }
     })

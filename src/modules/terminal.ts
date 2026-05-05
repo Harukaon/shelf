@@ -4,8 +4,16 @@ import { spawn, IPty } from "./pty";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
 
+const TERMINAL_WRITE_QUIET_MS = 12;
+const TERMINAL_WRITE_MAX_WAIT_MS = 80;
+const TERMINAL_DEBUG = localStorage.getItem("shelf:terminal-debug") === "1";
+
 export function flushTabBuffer(tab: TabInfo) {
   if (tab.dataBuffer.length === 0) return;
+  if (tab.writeTimer) {
+    clearTimeout(tab.writeTimer);
+    tab.writeTimer = undefined;
+  }
   if (tab.writeFrame) {
     cancelAnimationFrame(tab.writeFrame);
     tab.writeFrame = undefined;
@@ -18,13 +26,56 @@ export function flushTabBuffer(tab: TabInfo) {
 
 function writeTerminalData(tab: TabInfo, data: Uint8Array) {
   tab.dataBuffer.push(data.slice());
-  if (tab.writeFrame) return;
+  if (!tab.writeStartedAt) tab.writeStartedAt = performance.now();
+  if (TERMINAL_DEBUG) {
+    console.debug("[Terminal] pty chunk", {
+      tabId: tab.id,
+      bytes: data.length,
+      bufferedChunks: tab.dataBuffer.length,
+      bufferedBytes: tab.dataBuffer.reduce((sum, chunk) => sum + chunk.length, 0),
+      sinceInputMs: tab.lastUserInputAt ? Math.round(performance.now() - tab.lastUserInputAt) : null,
+    });
+  }
+  scheduleTerminalWrite(tab);
+}
+
+function scheduleTerminalWrite(tab: TabInfo) {
+  if (tab.writeTimer) clearTimeout(tab.writeTimer);
+  const elapsed = tab.writeStartedAt ? performance.now() - tab.writeStartedAt : 0;
+  const delay = elapsed >= TERMINAL_WRITE_MAX_WAIT_MS ? 0 : TERMINAL_WRITE_QUIET_MS;
+  tab.writeTimer = setTimeout(() => {
+    tab.writeTimer = undefined;
+    flushTerminalWrite(tab);
+  }, delay);
+}
+
+function flushTerminalWrite(tab: TabInfo) {
+  if (tab.writeFrame || tab.dataBuffer.length === 0) return;
   tab.writeFrame = requestAnimationFrame(() => {
     tab.writeFrame = undefined;
     if (!tab.terminal || !tab.active) return;
     const chunks = tab.dataBuffer.splice(0);
+    tab.writeStartedAt = undefined;
+    const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const combined = new Uint8Array(bytes);
+    let offset = 0;
     for (const chunk of chunks) {
-      tab.terminal.write(chunk);
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    if (TERMINAL_DEBUG) {
+      console.debug("[Terminal] write flush", {
+        tabId: tab.id,
+        chunks: chunks.length,
+        bytes,
+        sinceInputMs: tab.lastUserInputAt ? Math.round(performance.now() - tab.lastUserInputAt) : null,
+      });
+    }
+    const core = (tab.terminal as any)._core;
+    if (core?.writeSync && bytes <= 262_144) {
+      core.writeSync(combined, 1);
+    } else {
+      tab.terminal.write(combined);
     }
   });
 }
@@ -50,6 +101,19 @@ function terminalFontOptions() {
     fontWeight: "normal" as const,
     fontWeightBold: "bold" as const,
   };
+}
+
+function terminalPlatformOptions() {
+  const platform = navigator.platform.toLowerCase();
+  if (platform.includes("win")) {
+    return {
+      windowsPty: {
+        backend: "conpty" as const,
+        buildNumber: 19045,
+      },
+    };
+  }
+  return {};
 }
 
 function terminalPixelSize(tab: TabInfo) {
@@ -172,10 +236,12 @@ export function createTerminalTab(
   options?: { sessionId?: string; cwd?: string; workspacePath?: string; shell?: string; command?: { bin: string; args: string[] } },
 ): TabInfo {
   const fontOptions = terminalFontOptions();
+  const platformOptions = terminalPlatformOptions();
   const terminal = new Terminal({
     cursorBlink: true,
     fontSize: 13,
     ...fontOptions,
+    ...platformOptions,
     drawBoldTextInBrightColors: false,
     theme: TERMINAL_THEME,
     allowProposedApi: true,
@@ -248,6 +314,7 @@ export function createTerminalTab(
       return true;
     });
     terminal.onData((data: string) => {
+      tabInfo.lastUserInputAt = performance.now();
       onPtyWrite(tabId, data);
     });
     pty.onExit((exit) => {
