@@ -6,10 +6,27 @@ import { t } from "../i18n";
 
 export function flushTabBuffer(tab: TabInfo) {
   if (tab.dataBuffer.length === 0) return;
+  if (tab.writeFrame) {
+    cancelAnimationFrame(tab.writeFrame);
+    tab.writeFrame = undefined;
+  }
   const chunks = tab.dataBuffer.splice(0);
   for (const chunk of chunks) {
     tab.terminal.write(chunk);
   }
+}
+
+function writeTerminalData(tab: TabInfo, data: Uint8Array) {
+  tab.dataBuffer.push(data.slice());
+  if (tab.writeFrame) return;
+  tab.writeFrame = requestAnimationFrame(() => {
+    tab.writeFrame = undefined;
+    if (!tab.terminal || !tab.active) return;
+    const chunks = tab.dataBuffer.splice(0);
+    for (const chunk of chunks) {
+      tab.terminal.write(chunk);
+    }
+  });
 }
 
 function terminalFontOptions() {
@@ -66,9 +83,23 @@ function schedulePtyResize(tab: TabInfo, cols = tab.terminal.cols, rows = tab.te
 export function refitTerminal(tab: TabInfo) {
   if (!tab.fitAddon || !tab.terminal || !tab.pty || tab.containerEl.style.visibility === "hidden") return;
   const bounds = tab.containerEl.getBoundingClientRect();
-  if (bounds.width <= 0 || bounds.height <= 0) return;
+  const width = Math.round(bounds.width);
+  const height = Math.round(bounds.height);
+  if (width <= 0 || height <= 0) return;
+  const dimensions = tab.fitAddon.proposeDimensions();
+  if (!dimensions || isNaN(dimensions.cols) || isNaN(dimensions.rows)) return;
+  if (
+    tab.lastFitWidth === width &&
+    tab.lastFitHeight === height &&
+    tab.terminal.cols === dimensions.cols &&
+    tab.terminal.rows === dimensions.rows
+  ) {
+    return;
+  }
   try {
     tab.fitAddon.fit();
+    tab.lastFitWidth = width;
+    tab.lastFitHeight = height;
     tab.terminal.refresh(0, Math.max(0, tab.terminal.rows - 1));
   } catch (_) {
     /* ignore */
@@ -195,7 +226,7 @@ export function createTerminalTab(
 
     pty.onData((data: Uint8Array) => {
       if (tabInfo.active) {
-        terminal.write(data);
+        writeTerminalData(tabInfo, data);
       } else {
         tabInfo.dataBuffer.push(data.slice());
       }

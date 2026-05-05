@@ -37,9 +37,12 @@ export interface TabInfo {
   containerEl: HTMLDivElement;
   dataBuffer: Uint8Array[];
   active: boolean;
+  writeFrame?: number;
   resizeTimer?: ReturnType<typeof setTimeout>;
   ptyResizeTimer?: ReturnType<typeof setTimeout>;
   resizeFrame?: number;
   resizeFinalFrame?: number;
   resizeObserver?: ResizeObserver;
+  lastFitWidth?: number;
+  lastFitHeight?: number;
 }
