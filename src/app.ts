@@ -6,7 +6,7 @@ import { Session, FileEntry, TabInfo } from "./types";
 import { TabManager } from "./modules/tabs";
 import { WorkspaceManager } from "./modules/workspace";
 import { createTerminalTab, repaintTerminal, scheduleTerminalRefit, writeToPty } from "./modules/terminal";
-import { renderFileTree, clearFileCache } from "./modules/files";
+import { renderFileTree, clearFileCache, setupFileTreeContextMenu } from "./modules/files";
 import { setupDragDrop, setupPanelResize } from "./modules/dragdrop";
 import { t, setLang, getLang } from "./i18n";
 import { showTerminalMenu } from "./modules/pickers";
@@ -82,6 +82,7 @@ class App {
     this.settingsBtn.addEventListener("click", () => this._showSettings());
     this.refreshBtn.addEventListener("click", () => this._refreshAllSessions());
     this.addWorkspaceBtn.addEventListener("click", () => this.ws.promptAdd());
+    setupFileTreeContextMenu(this.fileTreeEl, () => this._refreshCurrentFileTree());
 
     this._setupPlatformWindowControls();
 
@@ -724,6 +725,13 @@ class App {
     }
   }
 
+  private _refreshCurrentFileTree() {
+    const path = this.selectedWorkspace || this.tabs.getActiveTab()?.workspacePath;
+    if (!path) return;
+    clearFileCache();
+    this._loadFileTree(path);
+  }
+
   private _renderWorkspaces() {
     this.workspaceList.innerHTML = "";
 
@@ -881,6 +889,7 @@ class App {
   }
 
   private _sortable: Sortable | null = null;
+  private _tabSortInProgress = false;
 
   private _renderTabs() {
     this.tabList.innerHTML = "";
@@ -895,8 +904,10 @@ class App {
       tabEl.dataset.tabId = tab.id;
       const closeHtml = tab.closable ? '<span class="tab-close" title="Close"><i data-lucide="x"></i></span>' : "";
       tabEl.innerHTML = `
-        <span class="dot-icon${isTabActive ? " active" : ""}"></span>
-        <span class="tab-title">${escapeHtml(tab.title)}</span>
+        <span class="tab-drag-handle">
+          <span class="dot-icon${isTabActive ? " active" : ""}"></span>
+          <span class="tab-title">${escapeHtml(tab.title)}</span>
+        </span>
         ${closeHtml}`;
       if (tab.closable) {
         tabEl.querySelector(".tab-close")!.addEventListener("click", (e) => {
@@ -909,7 +920,10 @@ class App {
           this.tabs.closeTab(tab.id, () => this._showStartPage());
         });
       }
-      tabEl.addEventListener("click", () => this.tabs.activateTab(tab.id));
+      tabEl.addEventListener("click", () => {
+        if (this._tabSortInProgress) return;
+        this.tabs.activateTab(tab.id);
+      });
       tabEl.addEventListener("auxclick", (e) => {
         if (e.button === 1 && tab.closable) {
           e.preventDefault();
@@ -929,19 +943,30 @@ class App {
     const self = this;
     this._sortable = Sortable.create(this.tabList, {
       animation: 150,
-      draggable: ".tab-item.closable",
+      draggable: ".tab-item",
+      handle: ".tab-drag-handle",
       filter: ".tab-close",
       preventOnFilter: false,
-      forceFallback: false,
+      forceFallback: true,
+      fallbackOnBody: true,
       delayOnTouchOnly: true,
       touchStartThreshold: 6,
       fallbackTolerance: 6,
+      ghostClass: "sortable-ghost",
+      chosenClass: "sortable-chosen",
+      dragClass: "sortable-drag",
+      onStart() {
+        self._tabSortInProgress = true;
+        document.body.classList.add("tab-sorting");
+      },
       onEnd(evt) {
         console.log("[Shelf] sortable onEnd tabId:", evt.item.dataset.tabId, "oldIndex:", evt.oldIndex, "newIndex:", evt.newIndex);
-        const tabId = evt.item.dataset.tabId;
-        if (tabId && evt.newIndex != null) {
-          self.tabs.reorderSilent(tabId, evt.newIndex);
-        }
+        const nextOrder = Array.from(self.tabList.querySelectorAll<HTMLElement>(".tab-item"))
+          .map((el) => el.dataset.tabId)
+          .filter((id): id is string => !!id);
+        self.tabs.reorderToMatch(nextOrder);
+        document.body.classList.remove("tab-sorting");
+        setTimeout(() => { self._tabSortInProgress = false; }, 0);
       },
     });
   }

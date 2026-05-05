@@ -175,6 +175,15 @@ body[data-platform="windows"] #tab-bar {
   background: var(--accent); border-color: var(--accent);
 }
 
+.tab-drag-handle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  cursor: grab;
+}
+
 .session-item .session-icon { display: none; }
 .session-item .dot-icon {
   width: 10px; height: 10px; border-radius: 50%;
@@ -194,6 +203,15 @@ body[data-platform="windows"] #tab-bar {
   opacity: 0.7 !important;
   background: var(--bg-hover) !important;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.sortable-ghost {
+  opacity: 0.35;
+}
+
+.sortable-chosen .tab-drag-handle,
+.sortable-drag .tab-drag-handle {
+  cursor: grabbing;
 }
 
 #tab-add-btn {

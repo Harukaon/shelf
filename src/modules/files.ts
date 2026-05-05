@@ -93,6 +93,10 @@ export async function renderFileTree(
       const relPath = selectedWorkspacePath ? absPath.replace(selectedWorkspacePath + "/", "") : absPath;
       const isMac = navigator.platform.toLowerCase().includes("mac");
       showContextMenu([
+        { label: t("context.refresh"), action: () => {
+          clearFileCache();
+          if (onRefreshTree) onRefreshTree();
+        }},
         { label: isMac ? t("context.reveal") : t("context.reveal_win"), action: async () => {
           try { await revealItemInDir(absPath); } catch (_) {}
         }},
@@ -132,4 +136,18 @@ export async function renderFileTree(
   }
 
   if (indent === 0) refreshIcons();
+}
+
+export function setupFileTreeContextMenu(container: HTMLElement, onRefresh: () => void) {
+  container.addEventListener("contextmenu", (e) => {
+    if ((e.target as HTMLElement | null)?.closest(".file-item")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    showContextMenu([
+      { label: t("context.refresh"), action: () => {
+        clearFileCache();
+        onRefresh();
+      }},
+    ], e.clientX, e.clientY);
+  });
 }

@@ -138,4 +138,17 @@ export class TabManager {
     }
     this.tabs = newMap;
   }
+
+  reorderToMatch(tabIds: string[]) {
+    const orderedIds = tabIds.filter((id) => this.tabs.has(id));
+    for (const id of this.getTabOrder()) {
+      if (!orderedIds.includes(id)) orderedIds.push(id);
+    }
+    const newMap = new Map<string, TabInfo>();
+    for (const id of orderedIds) {
+      const tab = this.tabs.get(id);
+      if (tab) newMap.set(id, tab);
+    }
+    this.tabs = newMap;
+  }
 }
