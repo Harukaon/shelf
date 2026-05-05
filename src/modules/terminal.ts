@@ -4,9 +4,11 @@ import { spawn, IPty } from "./pty";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
 
-const TERMINAL_WRITE_QUIET_MS = 12;
-const TERMINAL_WRITE_MAX_WAIT_MS = 80;
-const TERMINAL_DEBUG = localStorage.getItem("shelf:terminal-debug") === "1";
+const TERMINAL_WRITE_QUIET_MS = 16;
+const TERMINAL_WRITE_MAX_WAIT_MS = 120;
+const STABLE_WRITE_QUIET_MS = 40;
+const STABLE_WRITE_MAX_WAIT_MS = 240;
+const TERMINAL_DEBUG = localStorage.getItem("shelf:terminal-debug") !== "0";
 
 export function flushTabBuffer(tab: TabInfo) {
   if (tab.dataBuffer.length === 0) return;
@@ -27,13 +29,15 @@ export function flushTabBuffer(tab: TabInfo) {
 function writeTerminalData(tab: TabInfo, data: Uint8Array) {
   tab.dataBuffer.push(data.slice());
   if (!tab.writeStartedAt) tab.writeStartedAt = performance.now();
+  const ansiHints = scanAnsiHints(data);
   if (TERMINAL_DEBUG) {
-    console.debug("[Terminal] pty chunk", {
+    console.log("[TerminalDebug] pty chunk", {
       tabId: tab.id,
       bytes: data.length,
       bufferedChunks: tab.dataBuffer.length,
       bufferedBytes: tab.dataBuffer.reduce((sum, chunk) => sum + chunk.length, 0),
       sinceInputMs: tab.lastUserInputAt ? Math.round(performance.now() - tab.lastUserInputAt) : null,
+      ansiHints,
     });
   }
   scheduleTerminalWrite(tab);
@@ -42,7 +46,9 @@ function writeTerminalData(tab: TabInfo, data: Uint8Array) {
 function scheduleTerminalWrite(tab: TabInfo) {
   if (tab.writeTimer) clearTimeout(tab.writeTimer);
   const elapsed = tab.writeStartedAt ? performance.now() - tab.writeStartedAt : 0;
-  const delay = elapsed >= TERMINAL_WRITE_MAX_WAIT_MS ? 0 : TERMINAL_WRITE_QUIET_MS;
+  const quietMs = tab.stableWriteMode ? STABLE_WRITE_QUIET_MS : TERMINAL_WRITE_QUIET_MS;
+  const maxWaitMs = tab.stableWriteMode ? STABLE_WRITE_MAX_WAIT_MS : TERMINAL_WRITE_MAX_WAIT_MS;
+  const delay = elapsed >= maxWaitMs ? 0 : quietMs;
   tab.writeTimer = setTimeout(() => {
     tab.writeTimer = undefined;
     flushTerminalWrite(tab);
@@ -51,7 +57,7 @@ function scheduleTerminalWrite(tab: TabInfo) {
 
 function flushTerminalWrite(tab: TabInfo) {
   if (tab.writeFrame || tab.dataBuffer.length === 0) return;
-  tab.writeFrame = requestAnimationFrame(() => {
+  const doFlush = () => {
     tab.writeFrame = undefined;
     if (!tab.terminal || !tab.active) return;
     const chunks = tab.dataBuffer.splice(0);
@@ -64,20 +70,26 @@ function flushTerminalWrite(tab: TabInfo) {
       offset += chunk.length;
     }
     if (TERMINAL_DEBUG) {
-      console.debug("[Terminal] write flush", {
+      console.log("[TerminalDebug] write flush", {
         tabId: tab.id,
         chunks: chunks.length,
         bytes,
         sinceInputMs: tab.lastUserInputAt ? Math.round(performance.now() - tab.lastUserInputAt) : null,
+        stableWriteMode: !!tab.stableWriteMode,
       });
     }
     const core = (tab.terminal as any)._core;
-    if (core?.writeSync && bytes <= 262_144) {
-      core.writeSync(combined, 1);
+    if (core?.writeSync && (tab.stableWriteMode || bytes <= 262_144)) {
+      core.writeSync(combined);
     } else {
       tab.terminal.write(combined);
     }
-  });
+  };
+  if (tab.stableWriteMode) {
+    doFlush();
+  } else {
+    tab.writeFrame = requestAnimationFrame(doFlush);
+  }
 }
 
 function terminalFontOptions() {
@@ -114,6 +126,40 @@ function terminalPlatformOptions() {
     };
   }
   return {};
+}
+
+function isClaudeCommand(bin?: string) {
+  if (!bin) return false;
+  const normalized = bin.replace(/\\/g, "/").toLowerCase();
+  return (
+    normalized === "claude" ||
+    normalized === "claude.exe" ||
+    normalized === "claude.cmd" ||
+    normalized === "claude.bat" ||
+    normalized === "claude.ps1" ||
+    normalized.endsWith("/claude") ||
+    normalized.endsWith("/claude.exe") ||
+    normalized.endsWith("/claude.cmd") ||
+    normalized.endsWith("/claude.bat") ||
+    normalized.endsWith("/claude.ps1")
+  );
+}
+
+function scanAnsiHints(data: Uint8Array) {
+  if (!TERMINAL_DEBUG) return null;
+  let text = "";
+  try {
+    text = new TextDecoder().decode(data);
+  } catch (_) {
+    return null;
+  }
+  return {
+    clearScreen: text.includes("\x1b[2J") || text.includes("\x1b[J"),
+    clearScrollback: text.includes("\x1b[3J"),
+    homeCursor: text.includes("\x1b[H") || text.includes("\x1b[f"),
+    altEnter: text.includes("\x1b[?1049h") || text.includes("\x1b[?47h"),
+    altLeave: text.includes("\x1b[?1049l") || text.includes("\x1b[?47l"),
+  };
 }
 
 function terminalPixelSize(tab: TabInfo) {
@@ -237,11 +283,15 @@ export function createTerminalTab(
 ): TabInfo {
   const fontOptions = terminalFontOptions();
   const platformOptions = terminalPlatformOptions();
+  const platform = navigator.platform.toLowerCase();
+  const isWindows = platform.includes("win");
+  const claudeTab = isClaudeCommand(options?.command?.bin);
   const terminal = new Terminal({
     cursorBlink: true,
     fontSize: 13,
     ...fontOptions,
     ...platformOptions,
+    scrollback: isWindows && claudeTab ? 0 : 1000,
     drawBoldTextInBrightColors: false,
     theme: TERMINAL_THEME,
     allowProposedApi: true,
@@ -261,6 +311,7 @@ export function createTerminalTab(
     containerEl: null as any,
     dataBuffer: [],
     active: false,
+    stableWriteMode: isWindows && claudeTab,
   };
 
   let pty: IPty | undefined;
@@ -277,6 +328,15 @@ export function createTerminalTab(
 
     const ptyInit: Promise<number> = (pty as any)._init as Promise<number>;
     console.log(`[Terminal] tab ${tabId} spawning ${cmdBin} ${cmdArgs.join(" ")} cwd=${options?.cwd}`);
+    if (TERMINAL_DEBUG) {
+      console.log("[TerminalDebug] create", {
+        tabId,
+        claudeTab,
+        stableWriteMode: tabInfo.stableWriteMode,
+        scrollback: terminal.options.scrollback,
+        windowsPty: (terminal.options as any).windowsPty || null,
+      });
+    }
     ptyInit
       .then((pid: number) => {
         console.log(`[Terminal] tab ${tabId} pid=${pid} ok`);
@@ -317,6 +377,29 @@ export function createTerminalTab(
       tabInfo.lastUserInputAt = performance.now();
       onPtyWrite(tabId, data);
     });
+    if (TERMINAL_DEBUG) {
+      terminal.onWriteParsed(() => {
+        const activeBuffer = (terminal as any).buffer?.active;
+        console.log("[TerminalDebug] parsed", {
+          tabId,
+          cursorY: activeBuffer?.cursorY ?? null,
+          viewportY: activeBuffer?.viewportY ?? null,
+          baseY: activeBuffer?.baseY ?? null,
+          length: activeBuffer?.length ?? null,
+        });
+      });
+      terminal.onScroll((position: number) => {
+        console.log("[TerminalDebug] scroll", { tabId, position });
+      });
+      terminal.onRender((range) => {
+        console.log("[TerminalDebug] render", {
+          tabId,
+          start: range.start,
+          end: range.end,
+          sinceInputMs: tabInfo.lastUserInputAt ? Math.round(performance.now() - tabInfo.lastUserInputAt) : null,
+        });
+      });
+    }
     pty.onExit((exit) => {
       console.log(`[Terminal] pty exited tab ${tabId} pid=${pty?.pid} code=`, exit.exitCode, "signal:", exit.signal);
       terminal.write(`\r\n${t("process.exited")}\r\n`);

@@ -41,6 +41,7 @@ export interface TabInfo {
   writeFrame?: number;
   writeStartedAt?: number;
   lastUserInputAt?: number;
+  stableWriteMode?: boolean;
   resizeTimer?: ReturnType<typeof setTimeout>;
   ptyResizeTimer?: ReturnType<typeof setTimeout>;
   resizeFrame?: number;
