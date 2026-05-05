@@ -201,7 +201,15 @@ export function createTerminalTab(
       }
     });
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-      if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
+      if (
+        event.type === "keydown" &&
+        event.key === "Enter" &&
+        event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.isComposing
+      ) {
         onPtyWrite(tabId, "\x1b[13;2u");
         event.preventDefault();
         return false;
