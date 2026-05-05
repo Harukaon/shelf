@@ -51,4 +51,6 @@ export interface TabInfo {
   resizeObserver?: ResizeObserver;
   lastFitWidth?: number;
   lastFitHeight?: number;
+  lastImeDebugAt?: number;
+  lastImeDebugKind?: string;
 }

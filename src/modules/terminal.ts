@@ -252,6 +252,49 @@ function cellDisplayWidth(input: string) {
   return width;
 }
 
+function visibleBufferLine(tab: TabInfo, row: number) {
+  const buffer = tab.terminal.buffer?.active;
+  if (!buffer) return "";
+  return buffer.getLine(buffer.viewportY + row)?.translateToString(true) || "";
+}
+
+function summarizeVisibleTail(tab: TabInfo, count = 8) {
+  const rows = tab.terminal.rows;
+  const start = Math.max(0, rows - count);
+  const result: Array<{ row: number; text: string; width: number }> = [];
+  for (let row = start; row < rows; row++) {
+    const text = visibleBufferLine(tab, row).trimEnd();
+    if (!text.trim()) continue;
+    result.push({
+      row,
+      text: text.slice(0, 120),
+      width: cellDisplayWidth(text),
+    });
+  }
+  return result;
+}
+
+function lineLooksLikeSeparator(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return /^[\-\u2500-\u257f\u23af_=]+$/.test(trimmed);
+}
+
+function lineLooksLikeClaudeInput(text: string) {
+  return /^\s*(?:[\u2502\u2503\u2506\u2507|]\s*)?[>\u203a\uff1e]/u.test(text);
+}
+
+function claudeInputAnchorText(text: string) {
+  const line = text.trimEnd();
+  const promptMatch = line.match(/^(\s*(?:[\u2502\u2503\u2506\u2507|]\s*)?)([>\u203a\uff1e])(.*)$/u);
+  if (!promptMatch) return line;
+  const [, prefix, prompt, rest] = promptMatch;
+  const restWithoutRightBorder = rest.replace(/\s*[\u2502\u2503\u2506\u2507|]\s*$/u, "");
+  const restWithoutPadding = restWithoutRightBorder.replace(/\s+$/u, "");
+  const visibleRest = restWithoutPadding || (rest.startsWith(" ") ? " " : "");
+  return `${prefix}${prompt}${visibleRest}`;
+}
+
 function estimateImeAnchor(tab: TabInfo, cellWidth: number, cellHeight: number, screen: HTMLElement) {
   const buffer = tab.terminal.buffer?.active;
   let row = Math.max(0, Math.min(tab.terminal.rows - 1, buffer?.cursorY ?? 0));
@@ -265,6 +308,29 @@ function estimateImeAnchor(tab: TabInfo, cellWidth: number, cellHeight: number, 
       const line = buffer.getLine(visibleTop + y)?.translateToString(true) || "";
       const trimmed = line.trimEnd();
       if (!trimmed.trim()) continue;
+      if (lineLooksLikeSeparator(trimmed)) continue;
+      if (!lineLooksLikeClaudeInput(trimmed)) continue;
+      const anchorText = claudeInputAnchorText(trimmed);
+      row = y;
+      col = Math.min(tab.terminal.cols - 1, Math.max(0, cellDisplayWidth(anchorText)));
+      source = "claude-input-line";
+      sourceText = anchorText.slice(-80);
+      return {
+        left: Math.max(0, Math.min(col * cellWidth, screen.clientWidth - cellWidth)),
+        top: Math.max(0, Math.min(row * cellHeight, screen.clientHeight - cellHeight)),
+        height: cellHeight,
+        row,
+        col,
+        source,
+        sourceText,
+      };
+    }
+
+    for (let y = tab.terminal.rows - 1; y >= 0; y--) {
+      const line = buffer.getLine(visibleTop + y)?.translateToString(true) || "";
+      const trimmed = line.trimEnd();
+      if (!trimmed.trim()) continue;
+      if (lineLooksLikeSeparator(trimmed)) continue;
       row = y;
       col = Math.min(tab.terminal.cols - 1, Math.max(0, cellDisplayWidth(trimmed)));
       source = "last-visible-line";
@@ -297,6 +363,22 @@ function rectInfo(el: HTMLElement | null) {
 
 function logImeState(tab: TabInfo, eventName: string, phase: "before" | "after", extra: Record<string, unknown> = {}) {
   if (!IME_DEBUG) return;
+  const now = Date.now();
+  const eventKind = eventName.split(":")[0];
+  const isImportantEvent = /composition|input|focus|cursor-move|render-active-composition/.test(eventKind);
+  const isCompositionEvent = eventKind.startsWith("composition");
+  if (!isImportantEvent || phase !== "after") return;
+  if (!isCompositionEvent && tab.lastImeDebugAt && now - tab.lastImeDebugAt < 400) return;
+  if (
+    isCompositionEvent &&
+    tab.lastImeDebugKind === eventKind &&
+    tab.lastImeDebugAt &&
+    now - tab.lastImeDebugAt < 80
+  ) {
+    return;
+  }
+  tab.lastImeDebugAt = now;
+  tab.lastImeDebugKind = eventKind;
   const textarea = tab.terminal.textarea || null;
   const screen = tab.terminal.element?.querySelector(".xterm-screen") as HTMLElement | null;
   const compositionView = tab.terminal.element?.querySelector(".composition-view") as HTMLElement | null;
@@ -340,6 +422,7 @@ function logImeState(tab: TabInfo, eventName: string, phase: "before" | "after",
       cols: tab.terminal.cols,
       rows: tab.terminal.rows,
     } : null,
+    visibleTail: summarizeVisibleTail(tab),
     ...extra,
   });
 }
@@ -357,7 +440,6 @@ function updateWindowsImeOverlay(tab: TabInfo, eventName = "manual") {
   if (!Number.isFinite(cellWidth) || !Number.isFinite(cellHeight) || cellWidth <= 0 || cellHeight <= 0) return;
 
   const anchor = estimateImeAnchor(tab, cellWidth, cellHeight, screen);
-  logImeState(tab, eventName, "before", { anchor, cellWidth, cellHeight });
   const left = `${Math.round(anchor.left)}px`;
   const top = `${Math.round(anchor.top)}px`;
   const height = `${Math.max(1, Math.round(anchor.height))}px`;
@@ -377,7 +459,6 @@ function updateWindowsImeOverlay(tab: TabInfo, eventName = "manual") {
 
 function scheduleWindowsImeOverlayUpdate(tab: TabInfo, eventName = "manual") {
   if (!isWindowsPlatform()) return;
-  logImeState(tab, eventName, "before");
   requestAnimationFrame(() => updateWindowsImeOverlay(tab, `${eventName}:raf`));
   setTimeout(() => updateWindowsImeOverlay(tab, `${eventName}:timeout`), 0);
 }
