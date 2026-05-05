@@ -33,6 +33,12 @@ export interface IDisposable {
   dispose(): void;
 }
 
+function toUint8Array(data: Uint8Array | number[] | ArrayBuffer): Uint8Array {
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  return Uint8Array.from(data);
+}
+
 class Pty implements IPty {
   pid = 0;
   cols = 0;
@@ -141,8 +147,9 @@ class Pty implements IPty {
     await this._init;
     while (!this._closed) {
       try {
-        const data: Uint8Array = await invoke("pty_read", { pid: this.pid });
+        const rawData: Uint8Array | number[] | ArrayBuffer = await invoke("pty_read", { pid: this.pid });
         if (this._closed) return;
+        const data = toUint8Array(rawData);
         for (const fn of this._onDataListeners) fn(data);
       } catch (e) {
         if (typeof e === "string" && e.includes("EOF")) return;

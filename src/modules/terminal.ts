@@ -34,7 +34,7 @@ export function flushTabBuffer(tab: TabInfo) {
 }
 
 function writeTerminalData(tab: TabInfo, data: Uint8Array) {
-  const segments = splitSyncUpdateSequences(tab, data);
+  const segments = splitSyncUpdateSequences(tab, ensureUint8Array(data));
   for (const segment of segments) {
     if (segment.type === "start") {
       tab.syncUpdateMode = true;
@@ -92,6 +92,12 @@ function queueTerminalChunk(tab: TabInfo, data: Uint8Array) {
     });
   }
   scheduleTerminalWrite(tab);
+}
+
+function ensureUint8Array(data: Uint8Array | number[] | ArrayBuffer) {
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  return Uint8Array.from(data);
 }
 
 function splitSyncUpdateSequences(tab: TabInfo, data: Uint8Array) {
