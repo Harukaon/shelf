@@ -6,13 +6,15 @@ import { t } from "../i18n";
 
 const TERMINAL_WRITE_QUIET_MS = 16;
 const TERMINAL_WRITE_MAX_WAIT_MS = 120;
-const TERMINAL_DEBUG = localStorage.getItem("shelf:terminal-debug") !== "0";
+const TERMINAL_DEBUG_MODE = localStorage.getItem("shelf:terminal-debug") || "core";
+const TERMINAL_DEBUG = TERMINAL_DEBUG_MODE !== "0";
+const TERMINAL_VERBOSE_DEBUG = TERMINAL_DEBUG_MODE === "1" || TERMINAL_DEBUG_MODE === "verbose";
 const SYNC_UPDATE_START = "\x1b[?2026h";
 const SYNC_UPDATE_END = "\x1b[?2026l";
 
 export function flushTabBuffer(tab: TabInfo) {
   if (tab.dataBuffer.length === 0) return;
-  if (TERMINAL_DEBUG) {
+  if (TERMINAL_VERBOSE_DEBUG) {
     console.log("[TerminalDebug] flush hidden buffer", {
       tabId: tab.id,
       chunks: tab.dataBuffer.length,
@@ -62,7 +64,7 @@ function writeTerminalData(tab: TabInfo, data: Uint8Array) {
     if (tab.syncUpdateMode) {
       if (!tab.syncUpdateBuffer) tab.syncUpdateBuffer = [];
       tab.syncUpdateBuffer.push(segment.data);
-      if (TERMINAL_DEBUG) {
+      if (TERMINAL_VERBOSE_DEBUG) {
         console.log("[TerminalDebug] sync update buffer", {
           tabId: tab.id,
           bytes: segment.data.length,
@@ -80,7 +82,7 @@ function queueTerminalChunk(tab: TabInfo, data: Uint8Array) {
   tab.dataBuffer.push(data.slice());
   if (!tab.writeStartedAt) tab.writeStartedAt = performance.now();
   const ansiHints = scanAnsiHints(data);
-  if (TERMINAL_DEBUG) {
+  if (TERMINAL_VERBOSE_DEBUG) {
     console.log("[TerminalDebug] pty chunk", {
       tabId: tab.id,
       bytes: data.length,
@@ -169,7 +171,7 @@ function flushTerminalWrite(tab: TabInfo) {
       combined.set(chunk, offset);
       offset += chunk.length;
     }
-    if (TERMINAL_DEBUG) {
+    if (TERMINAL_VERBOSE_DEBUG) {
       console.log("[TerminalDebug] write flush", {
         tabId: tab.id,
         chunks: chunks.length,
@@ -218,7 +220,7 @@ function terminalPlatformOptions() {
 }
 
 function scanAnsiHints(data: Uint8Array) {
-  if (!TERMINAL_DEBUG) return null;
+  if (!TERMINAL_VERBOSE_DEBUG) return null;
   let text = "";
   try {
     text = new TextDecoder().decode(data);
@@ -278,7 +280,7 @@ export function refitTerminal(tab: TabInfo) {
   ) {
     return;
   }
-  if (TERMINAL_DEBUG) {
+  if (TERMINAL_VERBOSE_DEBUG) {
     console.log("[TerminalDebug] refit", {
       tabId: tab.id,
       width,
@@ -301,7 +303,7 @@ export function refitTerminal(tab: TabInfo) {
 
 export function scheduleTerminalRefit(tab: TabInfo, delay = 80) {
   if (!tab.terminal || tab.containerEl.style.visibility === "hidden") return;
-  if (TERMINAL_DEBUG) {
+  if (TERMINAL_VERBOSE_DEBUG) {
     console.log("[TerminalDebug] schedule refit", {
       tabId: tab.id,
       delay,
@@ -328,7 +330,7 @@ export function scheduleTerminalRefit(tab: TabInfo, delay = 80) {
 
 export function repaintTerminal(tab: TabInfo) {
   if (!tab.terminal || tab.containerEl.style.visibility === "hidden") return;
-  if (TERMINAL_DEBUG) {
+  if (TERMINAL_VERBOSE_DEBUG) {
     console.log("[TerminalDebug] repaint", { tabId: tab.id });
   }
   if (tab.resizeFrame) cancelAnimationFrame(tab.resizeFrame);
@@ -462,7 +464,7 @@ export function createTerminalTab(
     });
     terminal.onData((data: string) => {
       tabInfo.lastUserInputAt = performance.now();
-      if (TERMINAL_DEBUG) {
+      if (TERMINAL_VERBOSE_DEBUG) {
         console.log("[TerminalDebug] input", {
           tabId,
           length: data.length,
@@ -471,7 +473,7 @@ export function createTerminalTab(
       }
       onPtyWrite(tabId, data);
     });
-    if (TERMINAL_DEBUG) {
+    if (TERMINAL_VERBOSE_DEBUG) {
       terminal.onWriteParsed(() => {
         const activeBuffer = (terminal as any).buffer?.active;
         console.log("[TerminalDebug] parsed", {
@@ -513,7 +515,7 @@ export function createTerminalTab(
   tabInfo.containerEl = wrapper;
 
   tabInfo.resizeObserver = new ResizeObserver(() => {
-    if (TERMINAL_DEBUG) {
+    if (TERMINAL_VERBOSE_DEBUG) {
       const bounds = wrapper.getBoundingClientRect();
       console.log("[TerminalDebug] resize observer", {
         tabId,
@@ -527,7 +529,7 @@ export function createTerminalTab(
 
   terminal.onResize(() => {
     try {
-      if (TERMINAL_DEBUG) {
+      if (TERMINAL_VERBOSE_DEBUG) {
         console.log("[TerminalDebug] terminal resize", {
           tabId,
           cols: terminal.cols,

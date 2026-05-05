@@ -11,7 +11,18 @@ use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, Master
 use tauri::{async_runtime::RwLock, AppHandle, Runtime};
 
 const PTY_READ_BUFFER_BYTES: usize = 64 * 1024;
-const PTY_DEBUG: bool = true;
+
+fn pty_debug_mode() -> String {
+    std::env::var("SHELF_PTY_DEBUG").unwrap_or_else(|_| "core".to_string())
+}
+
+fn pty_core_debug() -> bool {
+    pty_debug_mode() != "0"
+}
+
+fn pty_verbose_debug() -> bool {
+    matches!(pty_debug_mode().as_str(), "1" | "verbose")
+}
 
 #[derive(Default)]
 pub struct PtyState {
@@ -116,7 +127,7 @@ pub async fn pty_spawn<R: Runtime>(
             child_exited: AtomicBool::new(false),
         }),
     );
-    if PTY_DEBUG {
+    if pty_core_debug() {
         println!(
             "[PtyDebug] spawn pid={} term={} cols={} rows={} cwd={:?}",
             handler, term_name, cols, rows, spawn_cwd
@@ -131,7 +142,7 @@ pub async fn pty_write(
     data: String,
     state: tauri::State<'_, PtyState>,
 ) -> Result<(), String> {
-    if PTY_DEBUG {
+    if pty_verbose_debug() {
         println!(
             "[PtyDebug] write pid={} bytes={} preview={}",
             pid,
@@ -182,7 +193,7 @@ pub async fn pty_read(pid: u32, state: tauri::State<'_, PtyState>) -> Result<Vec
     })
     .await
     .map_err(|e| e.to_string())?;
-    if PTY_DEBUG {
+    if pty_verbose_debug() {
         match &result {
             Ok(buf) => {
                 let text = String::from_utf8_lossy(buf);
@@ -215,7 +226,7 @@ pub async fn pty_resize(
     pixel_height: Option<u16>,
     state: tauri::State<'_, PtyState>,
 ) -> Result<(), String> {
-    if PTY_DEBUG {
+    if pty_core_debug() {
         println!(
             "[PtyDebug] resize pid={} cols={} rows={} px={:?}x{:?}",
             pid, cols, rows, pixel_width, pixel_height
