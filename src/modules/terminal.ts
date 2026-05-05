@@ -9,6 +9,7 @@ const TERMINAL_WRITE_MAX_WAIT_MS = 120;
 const TERMINAL_DEBUG_MODE = localStorage.getItem("shelf:terminal-debug") || "core";
 const TERMINAL_DEBUG = TERMINAL_DEBUG_MODE !== "0";
 const TERMINAL_VERBOSE_DEBUG = TERMINAL_DEBUG_MODE === "1" || TERMINAL_DEBUG_MODE === "verbose";
+const IME_DEBUG = localStorage.getItem("shelf:ime-debug") !== "0";
 const SYNC_UPDATE_START = "\x1b[?2026h";
 const SYNC_UPDATE_END = "\x1b[?2026l";
 
@@ -255,6 +256,8 @@ function estimateImeAnchor(tab: TabInfo, cellWidth: number, cellHeight: number, 
   const buffer = tab.terminal.buffer?.active;
   let row = Math.max(0, Math.min(tab.terminal.rows - 1, buffer?.cursorY ?? 0));
   let col = Math.max(0, Math.min(tab.terminal.cols - 1, buffer?.cursorX ?? 0));
+  let source = "cursor";
+  let sourceText = "";
 
   if (buffer) {
     const visibleTop = buffer.viewportY;
@@ -264,6 +267,8 @@ function estimateImeAnchor(tab: TabInfo, cellWidth: number, cellHeight: number, 
       if (!trimmed.trim()) continue;
       row = y;
       col = Math.min(tab.terminal.cols - 1, Math.max(0, cellDisplayWidth(trimmed)));
+      source = "last-visible-line";
+      sourceText = trimmed.slice(-80);
       break;
     }
   }
@@ -272,10 +277,74 @@ function estimateImeAnchor(tab: TabInfo, cellWidth: number, cellHeight: number, 
     left: Math.max(0, Math.min(col * cellWidth, screen.clientWidth - cellWidth)),
     top: Math.max(0, Math.min(row * cellHeight, screen.clientHeight - cellHeight)),
     height: cellHeight,
+    row,
+    col,
+    source,
+    sourceText,
   };
 }
 
-function updateWindowsImeOverlay(tab: TabInfo) {
+function rectInfo(el: HTMLElement | null) {
+  if (!el) return null;
+  const rect = el.getBoundingClientRect();
+  return {
+    left: Math.round(rect.left),
+    top: Math.round(rect.top),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+}
+
+function logImeState(tab: TabInfo, eventName: string, phase: "before" | "after", extra: Record<string, unknown> = {}) {
+  if (!IME_DEBUG) return;
+  const textarea = tab.terminal.textarea || null;
+  const screen = tab.terminal.element?.querySelector(".xterm-screen") as HTMLElement | null;
+  const compositionView = tab.terminal.element?.querySelector(".composition-view") as HTMLElement | null;
+  const helper = tab.terminal.element?.querySelector(".xterm-helpers") as HTMLElement | null;
+  const buffer = tab.terminal.buffer?.active;
+  console.log("[ImeDebug]", {
+    event: eventName,
+    phase,
+    tabId: tab.id,
+    textareaRect: rectInfo(textarea),
+    compositionRect: rectInfo(compositionView),
+    helperRect: rectInfo(helper),
+    screenRect: rectInfo(screen),
+    textareaStyle: textarea ? {
+      left: textarea.style.left,
+      top: textarea.style.top,
+      width: textarea.style.width,
+      height: textarea.style.height,
+      lineHeight: textarea.style.lineHeight,
+      zIndex: textarea.style.zIndex,
+      valueLength: textarea.value.length,
+      valuePreview: textarea.value.slice(-30),
+    } : null,
+    compositionStyle: compositionView ? {
+      left: compositionView.style.left,
+      top: compositionView.style.top,
+      width: compositionView.style.width,
+      height: compositionView.style.height,
+      lineHeight: compositionView.style.lineHeight,
+      textLength: compositionView.textContent?.length || 0,
+      textPreview: compositionView.textContent?.slice(-30) || "",
+      active: compositionView.classList.contains("active"),
+    } : null,
+    buffer: buffer ? {
+      type: buffer.type,
+      cursorX: buffer.cursorX,
+      cursorY: buffer.cursorY,
+      viewportY: buffer.viewportY,
+      baseY: buffer.baseY,
+      length: buffer.length,
+      cols: tab.terminal.cols,
+      rows: tab.terminal.rows,
+    } : null,
+    ...extra,
+  });
+}
+
+function updateWindowsImeOverlay(tab: TabInfo, eventName = "manual") {
   if (!isWindowsPlatform() || !tab.terminal?.element) return;
   const textarea = tab.terminal.textarea;
   const screen = tab.terminal.element.querySelector(".xterm-screen") as HTMLElement | null;
@@ -288,6 +357,7 @@ function updateWindowsImeOverlay(tab: TabInfo) {
   if (!Number.isFinite(cellWidth) || !Number.isFinite(cellHeight) || cellWidth <= 0 || cellHeight <= 0) return;
 
   const anchor = estimateImeAnchor(tab, cellWidth, cellHeight, screen);
+  logImeState(tab, eventName, "before", { anchor, cellWidth, cellHeight });
   const left = `${Math.round(anchor.left)}px`;
   const top = `${Math.round(anchor.top)}px`;
   const height = `${Math.max(1, Math.round(anchor.height))}px`;
@@ -302,26 +372,30 @@ function updateWindowsImeOverlay(tab: TabInfo) {
   compositionView.style.top = top;
   compositionView.style.height = height;
   compositionView.style.lineHeight = height;
+  logImeState(tab, eventName, "after", { anchor, cellWidth, cellHeight });
 }
 
-function scheduleWindowsImeOverlayUpdate(tab: TabInfo) {
+function scheduleWindowsImeOverlayUpdate(tab: TabInfo, eventName = "manual") {
   if (!isWindowsPlatform()) return;
-  requestAnimationFrame(() => updateWindowsImeOverlay(tab));
-  setTimeout(() => updateWindowsImeOverlay(tab), 0);
+  logImeState(tab, eventName, "before");
+  requestAnimationFrame(() => updateWindowsImeOverlay(tab, `${eventName}:raf`));
+  setTimeout(() => updateWindowsImeOverlay(tab, `${eventName}:timeout`), 0);
 }
 
 function setupWindowsImeOverlay(tab: TabInfo) {
   if (!isWindowsPlatform()) return;
   const textarea = tab.terminal.textarea;
   if (!textarea) return;
-  textarea.addEventListener("compositionstart", () => scheduleWindowsImeOverlayUpdate(tab));
-  textarea.addEventListener("compositionupdate", () => scheduleWindowsImeOverlayUpdate(tab));
-  textarea.addEventListener("input", () => scheduleWindowsImeOverlayUpdate(tab));
-  textarea.addEventListener("focus", () => scheduleWindowsImeOverlayUpdate(tab));
-  tab.terminal.onCursorMove(() => scheduleWindowsImeOverlayUpdate(tab));
+  textarea.addEventListener("compositionstart", (event) => scheduleWindowsImeOverlayUpdate(tab, `compositionstart:${event.data || ""}`));
+  textarea.addEventListener("compositionupdate", (event) => scheduleWindowsImeOverlayUpdate(tab, `compositionupdate:${event.data || ""}`));
+  textarea.addEventListener("compositionend", (event) => scheduleWindowsImeOverlayUpdate(tab, `compositionend:${event.data || ""}`));
+  textarea.addEventListener("input", (event) => scheduleWindowsImeOverlayUpdate(tab, `input:${(event as InputEvent).inputType || ""}`));
+  textarea.addEventListener("focus", () => scheduleWindowsImeOverlayUpdate(tab, "focus"));
+  textarea.addEventListener("blur", () => logImeState(tab, "blur", "before"));
+  tab.terminal.onCursorMove(() => scheduleWindowsImeOverlayUpdate(tab, "cursor-move"));
   tab.terminal.onRender(() => {
     const compositionView = tab.terminal.element?.querySelector(".composition-view") as HTMLElement | null;
-    if (compositionView?.classList.contains("active")) scheduleWindowsImeOverlayUpdate(tab);
+    if (compositionView?.classList.contains("active")) scheduleWindowsImeOverlayUpdate(tab, "render-active-composition");
   });
 }
 
