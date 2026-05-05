@@ -6,12 +6,17 @@ import { t } from "../i18n";
 
 const TERMINAL_WRITE_QUIET_MS = 16;
 const TERMINAL_WRITE_MAX_WAIT_MS = 120;
-const STABLE_WRITE_QUIET_MS = 40;
-const STABLE_WRITE_MAX_WAIT_MS = 240;
 const TERMINAL_DEBUG = localStorage.getItem("shelf:terminal-debug") !== "0";
 
 export function flushTabBuffer(tab: TabInfo) {
   if (tab.dataBuffer.length === 0) return;
+  if (TERMINAL_DEBUG) {
+    console.log("[TerminalDebug] flush hidden buffer", {
+      tabId: tab.id,
+      chunks: tab.dataBuffer.length,
+      bytes: tab.dataBuffer.reduce((sum, chunk) => sum + chunk.length, 0),
+    });
+  }
   if (tab.writeTimer) {
     clearTimeout(tab.writeTimer);
     tab.writeTimer = undefined;
@@ -46,9 +51,7 @@ function writeTerminalData(tab: TabInfo, data: Uint8Array) {
 function scheduleTerminalWrite(tab: TabInfo) {
   if (tab.writeTimer) clearTimeout(tab.writeTimer);
   const elapsed = tab.writeStartedAt ? performance.now() - tab.writeStartedAt : 0;
-  const quietMs = tab.stableWriteMode ? STABLE_WRITE_QUIET_MS : TERMINAL_WRITE_QUIET_MS;
-  const maxWaitMs = tab.stableWriteMode ? STABLE_WRITE_MAX_WAIT_MS : TERMINAL_WRITE_MAX_WAIT_MS;
-  const delay = elapsed >= maxWaitMs ? 0 : quietMs;
+  const delay = elapsed >= TERMINAL_WRITE_MAX_WAIT_MS ? 0 : TERMINAL_WRITE_QUIET_MS;
   tab.writeTimer = setTimeout(() => {
     tab.writeTimer = undefined;
     flushTerminalWrite(tab);
@@ -57,7 +60,7 @@ function scheduleTerminalWrite(tab: TabInfo) {
 
 function flushTerminalWrite(tab: TabInfo) {
   if (tab.writeFrame || tab.dataBuffer.length === 0) return;
-  const doFlush = () => {
+  tab.writeFrame = requestAnimationFrame(() => {
     tab.writeFrame = undefined;
     if (!tab.terminal || !tab.active) return;
     const chunks = tab.dataBuffer.splice(0);
@@ -75,21 +78,10 @@ function flushTerminalWrite(tab: TabInfo) {
         chunks: chunks.length,
         bytes,
         sinceInputMs: tab.lastUserInputAt ? Math.round(performance.now() - tab.lastUserInputAt) : null,
-        stableWriteMode: !!tab.stableWriteMode,
       });
     }
-    const core = (tab.terminal as any)._core;
-    if (core?.writeSync && (tab.stableWriteMode || bytes <= 262_144)) {
-      core.writeSync(combined);
-    } else {
-      tab.terminal.write(combined);
-    }
-  };
-  if (tab.stableWriteMode) {
-    doFlush();
-  } else {
-    tab.writeFrame = requestAnimationFrame(doFlush);
-  }
+    tab.terminal.write(combined);
+  });
 }
 
 function terminalFontOptions() {
@@ -126,23 +118,6 @@ function terminalPlatformOptions() {
     };
   }
   return {};
-}
-
-function isClaudeCommand(bin?: string) {
-  if (!bin) return false;
-  const normalized = bin.replace(/\\/g, "/").toLowerCase();
-  return (
-    normalized === "claude" ||
-    normalized === "claude.exe" ||
-    normalized === "claude.cmd" ||
-    normalized === "claude.bat" ||
-    normalized === "claude.ps1" ||
-    normalized.endsWith("/claude") ||
-    normalized.endsWith("/claude.exe") ||
-    normalized.endsWith("/claude.cmd") ||
-    normalized.endsWith("/claude.bat") ||
-    normalized.endsWith("/claude.ps1")
-  );
 }
 
 function scanAnsiHints(data: Uint8Array) {
@@ -206,6 +181,17 @@ export function refitTerminal(tab: TabInfo) {
   ) {
     return;
   }
+  if (TERMINAL_DEBUG) {
+    console.log("[TerminalDebug] refit", {
+      tabId: tab.id,
+      width,
+      height,
+      prevWidth: tab.lastFitWidth ?? null,
+      prevHeight: tab.lastFitHeight ?? null,
+      cols: dimensions.cols,
+      rows: dimensions.rows,
+    });
+  }
   try {
     tab.fitAddon.fit();
     tab.lastFitWidth = width;
@@ -218,6 +204,12 @@ export function refitTerminal(tab: TabInfo) {
 
 export function scheduleTerminalRefit(tab: TabInfo, delay = 80) {
   if (!tab.terminal || tab.containerEl.style.visibility === "hidden") return;
+  if (TERMINAL_DEBUG) {
+    console.log("[TerminalDebug] schedule refit", {
+      tabId: tab.id,
+      delay,
+    });
+  }
 
   if (!tab.resizeFrame) {
     tab.resizeFrame = requestAnimationFrame(() => {
@@ -239,6 +231,9 @@ export function scheduleTerminalRefit(tab: TabInfo, delay = 80) {
 
 export function repaintTerminal(tab: TabInfo) {
   if (!tab.terminal || tab.containerEl.style.visibility === "hidden") return;
+  if (TERMINAL_DEBUG) {
+    console.log("[TerminalDebug] repaint", { tabId: tab.id });
+  }
   if (tab.resizeFrame) cancelAnimationFrame(tab.resizeFrame);
   tab.resizeFrame = requestAnimationFrame(() => {
     tab.resizeFrame = undefined;
@@ -283,15 +278,13 @@ export function createTerminalTab(
 ): TabInfo {
   const fontOptions = terminalFontOptions();
   const platformOptions = terminalPlatformOptions();
-  const platform = navigator.platform.toLowerCase();
-  const isWindows = platform.includes("win");
-  const claudeTab = isClaudeCommand(options?.command?.bin);
+  const cmdBin = options?.command?.bin || options?.shell || "zsh";
+  const cmdArgs = options?.command?.args || [];
   const terminal = new Terminal({
     cursorBlink: true,
     fontSize: 13,
     ...fontOptions,
     ...platformOptions,
-    scrollback: isWindows && claudeTab ? 0 : 1000,
     drawBoldTextInBrightColors: false,
     theme: TERMINAL_THEME,
     allowProposedApi: true,
@@ -311,15 +304,12 @@ export function createTerminalTab(
     containerEl: null as any,
     dataBuffer: [],
     active: false,
-    stableWriteMode: isWindows && claudeTab,
   };
 
   let pty: IPty | undefined;
   try {
     const spawnOpts: Record<string, unknown> = { cols: terminal.cols, rows: terminal.rows };
     if (options?.cwd) spawnOpts.cwd = options.cwd;
-    const cmdBin = options?.command?.bin || options?.shell || "zsh";
-    const cmdArgs = options?.command?.args || [];
     if (options?.command) {
       pty = spawn(cmdBin, cmdArgs, spawnOpts);
     } else {
@@ -331,8 +321,8 @@ export function createTerminalTab(
     if (TERMINAL_DEBUG) {
       console.log("[TerminalDebug] create", {
         tabId,
-        claudeTab,
-        stableWriteMode: tabInfo.stableWriteMode,
+        command: cmdBin,
+        args: cmdArgs,
         scrollback: terminal.options.scrollback,
         windowsPty: (terminal.options as any).windowsPty || null,
       });
@@ -375,6 +365,13 @@ export function createTerminalTab(
     });
     terminal.onData((data: string) => {
       tabInfo.lastUserInputAt = performance.now();
+      if (TERMINAL_DEBUG) {
+        console.log("[TerminalDebug] input", {
+          tabId,
+          length: data.length,
+          preview: JSON.stringify(data).slice(0, 120),
+        });
+      }
       onPtyWrite(tabId, data);
     });
     if (TERMINAL_DEBUG) {
@@ -419,12 +416,27 @@ export function createTerminalTab(
   tabInfo.containerEl = wrapper;
 
   tabInfo.resizeObserver = new ResizeObserver(() => {
+    if (TERMINAL_DEBUG) {
+      const bounds = wrapper.getBoundingClientRect();
+      console.log("[TerminalDebug] resize observer", {
+        tabId,
+        width: Math.round(bounds.width),
+        height: Math.round(bounds.height),
+      });
+    }
     scheduleTerminalRefit(tabInfo);
   });
   tabInfo.resizeObserver.observe(wrapper);
 
   terminal.onResize(() => {
     try {
+      if (TERMINAL_DEBUG) {
+        console.log("[TerminalDebug] terminal resize", {
+          tabId,
+          cols: terminal.cols,
+          rows: terminal.rows,
+        });
+      }
       schedulePtyResize(tabInfo);
     } catch (_) {
       /* ignore */

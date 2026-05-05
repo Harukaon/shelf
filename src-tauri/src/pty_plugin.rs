@@ -11,6 +11,7 @@ use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, Master
 use tauri::{async_runtime::RwLock, AppHandle, Runtime};
 
 const PTY_READ_BUFFER_BYTES: usize = 64 * 1024;
+const PTY_DEBUG: bool = true;
 
 #[derive(Default)]
 pub struct PtyState {
@@ -84,12 +85,13 @@ pub async fn pty_spawn<R: Runtime>(
         .filter(|value| !value.is_empty() && value != "Terminal")
         .unwrap_or_else(|| "xterm-256color".to_string());
 
+    let spawn_cwd = cwd.clone();
     let mut cmd = CommandBuilder::new(file);
     cmd.args(args);
     if let Some(cwd) = cwd {
         cmd.cwd(OsString::from(cwd));
     }
-    cmd.env(OsString::from("TERM"), OsString::from(term_name));
+    cmd.env(OsString::from("TERM"), OsString::from(term_name.clone()));
     cmd.env(OsString::from("COLORTERM"), OsString::from("truecolor"));
     cmd.env(OsString::from("CLICOLOR"), OsString::from("1"));
     cmd.env(OsString::from("TERM_PROGRAM"), OsString::from("Shelf"));
@@ -114,6 +116,12 @@ pub async fn pty_spawn<R: Runtime>(
             child_exited: AtomicBool::new(false),
         }),
     );
+    if PTY_DEBUG {
+        println!(
+            "[PtyDebug] spawn pid={} term={} cols={} rows={} cwd={:?}",
+            handler, term_name, cols, rows, spawn_cwd
+        );
+    }
     Ok(handler)
 }
 
@@ -123,6 +131,14 @@ pub async fn pty_write(
     data: String,
     state: tauri::State<'_, PtyState>,
 ) -> Result<(), String> {
+    if PTY_DEBUG {
+        println!(
+            "[PtyDebug] write pid={} bytes={} preview={}",
+            pid,
+            data.len(),
+            data.chars().flat_map(|c| c.escape_default()).take(120).collect::<String>()
+        );
+    }
     let session = state
         .sessions
         .read()
@@ -166,6 +182,23 @@ pub async fn pty_read(pid: u32, state: tauri::State<'_, PtyState>) -> Result<Vec
     })
     .await
     .map_err(|e| e.to_string())?;
+    if PTY_DEBUG {
+        match &result {
+            Ok(buf) => {
+                let text = String::from_utf8_lossy(buf);
+                let preview: String = text.chars().flat_map(|c| c.escape_default()).take(160).collect();
+                println!(
+                    "[PtyDebug] read pid={} bytes={} preview={}",
+                    pid,
+                    buf.len(),
+                    preview
+                );
+            }
+            Err(err) => {
+                println!("[PtyDebug] read pid={} error={}", pid, err);
+            }
+        }
+    }
     if matches!(result, Err(ref e) if e == "EOF") {
         session.reader_closed.store(true, Ordering::Release);
         remove_session_if_done(pid, &session, &state).await;
@@ -182,6 +215,12 @@ pub async fn pty_resize(
     pixel_height: Option<u16>,
     state: tauri::State<'_, PtyState>,
 ) -> Result<(), String> {
+    if PTY_DEBUG {
+        println!(
+            "[PtyDebug] resize pid={} cols={} rows={} px={:?}x{:?}",
+            pid, cols, rows, pixel_width, pixel_height
+        );
+    }
     let session = state
         .sessions
         .read()
