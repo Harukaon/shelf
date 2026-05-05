@@ -473,27 +473,6 @@ body[data-platform="windows"] #tab-bar {
 .terminal-wrapper .xterm-viewport {
   background: var(--bg-primary);
 }
-.terminal-wrapper .xterm-screen {
-  overflow: hidden;
-}
-.terminal-wrapper .xterm .xterm-helpers {
-  left: 0;
-  right: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-.terminal-wrapper .xterm .xterm-helper-textarea {
-  max-width: 1px !important;
-  max-height: 1px !important;
-  overflow: hidden !important;
-}
-.terminal-wrapper .xterm .composition-view {
-  max-width: calc(100% - 8px);
-  overflow: hidden;
-  text-overflow: clip;
-  pointer-events: none;
-}
 #terminal-container .xterm-viewport {
   scrollbar-width: thin;
   scrollbar-color: var(--bg-active) var(--bg-secondary);
