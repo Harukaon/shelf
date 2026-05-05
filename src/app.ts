@@ -31,6 +31,8 @@ type PendingClaudeTab = {
   timer?: ReturnType<typeof setTimeout>;
 };
 
+type ResizeDirection = "East" | "North" | "NorthEast" | "NorthWest" | "South" | "SouthEast" | "SouthWest" | "West";
+
 class App {
   tabs!: TabManager;
   ws!: WorkspaceManager;
@@ -194,15 +196,38 @@ class App {
     const isMac = platform.includes("mac");
     document.body.setAttribute("data-platform", isMac ? "macos" : "windows");
 
-    // startDragging() API — data-tauri-drag-region is unreliable with overlay title bar
     const tabBar = document.getElementById("tab-bar")!;
     const win = getCurrentWebviewWindow();
     tabBar.addEventListener("mousedown", (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.closest("button") || target.closest(".tab-item") || target.closest(".tab-close")) return;
+      if (e.button !== 0 || e.detail > 1 || !this._isWindowDragTarget(e.target)) return;
       e.preventDefault();
       win.startDragging();
     });
+    tabBar.addEventListener("dblclick", (e: MouseEvent) => {
+      if (!this._isWindowDragTarget(e.target)) return;
+      e.preventDefault();
+      win.toggleMaximize();
+    });
+
+    if (!isMac) {
+      document.getElementById("win-minimize")!.addEventListener("click", () => win.minimize());
+      document.getElementById("win-maximize")!.addEventListener("click", () => win.toggleMaximize());
+      document.getElementById("win-close")!.addEventListener("click", () => win.close());
+      document.querySelectorAll<HTMLElement>(".window-resize-zone").forEach((zone) => {
+        zone.addEventListener("mousedown", (e: MouseEvent) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          const direction = zone.dataset.resizeDirection as ResizeDirection | undefined;
+          if (direction) win.startResizeDragging(direction);
+        });
+      });
+    }
+  }
+
+  private _isWindowDragTarget(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null;
+    if (!el) return false;
+    return !el.closest("button, .tab-item, .tab-close, #window-controls");
   }
 
   private _setupCloseConfirm() {

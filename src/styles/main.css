@@ -129,6 +129,10 @@ i[data-lucide] {
   flex-shrink: 0;
 }
 
+body[data-platform="windows"] #tab-bar {
+  background: #242a33;
+}
+
 #tab-list {
   display: flex;
   flex: 1;
@@ -594,7 +598,115 @@ body[data-platform="macos"] #tab-list {
   margin-left: 72px;
 }
 
-/* Window controls removed — using native title bar controls on all platforms */
 #window-controls {
   display: none;
+}
+
+body[data-platform="windows"] #tab-drag-zone {
+  width: 72px;
+  min-width: 72px;
+}
+
+body[data-platform="windows"] #window-controls {
+  align-self: stretch;
+  display: flex;
+  margin-left: 4px;
+}
+
+#window-controls button {
+  width: 46px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+#window-controls button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+#window-controls #win-close:hover {
+  background: var(--red);
+  color: #ffffff;
+}
+
+.window-resize-zone {
+  display: none;
+}
+
+body[data-platform="windows"] .window-resize-zone {
+  position: fixed;
+  z-index: 10000;
+  display: block;
+}
+
+body[data-platform="windows"] #window-resize-n,
+body[data-platform="windows"] #window-resize-s {
+  left: 8px;
+  right: 8px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+body[data-platform="windows"] #window-resize-n {
+  top: 0;
+}
+
+body[data-platform="windows"] #window-resize-s {
+  bottom: 0;
+}
+
+body[data-platform="windows"] #window-resize-e,
+body[data-platform="windows"] #window-resize-w {
+  top: 8px;
+  bottom: 8px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+body[data-platform="windows"] #window-resize-e {
+  right: 0;
+}
+
+body[data-platform="windows"] #window-resize-w {
+  left: 0;
+}
+
+body[data-platform="windows"] #window-resize-ne,
+body[data-platform="windows"] #window-resize-nw,
+body[data-platform="windows"] #window-resize-se,
+body[data-platform="windows"] #window-resize-sw {
+  width: 10px;
+  height: 10px;
+}
+
+body[data-platform="windows"] #window-resize-ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+body[data-platform="windows"] #window-resize-nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+body[data-platform="windows"] #window-resize-se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
+body[data-platform="windows"] #window-resize-sw {
+  left: 0;
+  bottom: 0;
+  cursor: nesw-resize;
 }

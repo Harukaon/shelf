@@ -30,7 +30,8 @@
         "height": 800,
         "resizable": true,
         "hiddenTitle": true,
-        "acceptFirstMouse": true
+        "acceptFirstMouse": true,
+        "visible": false
       }
     ],
     "security": {
