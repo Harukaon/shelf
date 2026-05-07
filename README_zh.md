@@ -59,6 +59,10 @@ npm run tauri build
 | 终端   | xterm.js, FitAddon                      |
 | UI     | Lucide icons, SortableJS                |
 
+## 友情链接
+
+- [LINUX DO](https://linux.do/) — 一个友好的 Linux、编程和技术爱好者社区。
+
 ## 许可证
 
 MIT
