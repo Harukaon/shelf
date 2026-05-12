@@ -4,224 +4,12 @@ import { spawn, IPty } from "./pty";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
 
-const TERMINAL_WRITE_QUIET_MS = 16;
-const TERMINAL_WRITE_MAX_WAIT_MS = 120;
-const TERMINAL_DEBUG_MODE = localStorage.getItem("shelf:terminal-debug") || "0";
-const TERMINAL_DEBUG = TERMINAL_DEBUG_MODE !== "0";
-const TERMINAL_VERBOSE_DEBUG = TERMINAL_DEBUG_MODE === "1" || TERMINAL_DEBUG_MODE === "verbose";
-const SYNC_UPDATE_START = "\x1b[?2026h";
-const SYNC_UPDATE_END = "\x1b[?2026l";
-const SYNC_UPDATE_START_BYTES = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x68]);
-const SYNC_UPDATE_END_BYTES = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x6c]);
-
 export function flushTabBuffer(tab: TabInfo) {
   if (tab.dataBuffer.length === 0) return;
-  if (TERMINAL_VERBOSE_DEBUG) {
-    console.log("[TerminalDebug] flush hidden buffer", {
-      tabId: tab.id,
-      chunks: tab.dataBuffer.length,
-      bytes: tab.dataBuffer.reduce((sum, chunk) => sum + chunk.length, 0),
-    });
-  }
-  if (tab.writeTimer) {
-    clearTimeout(tab.writeTimer);
-    tab.writeTimer = undefined;
-  }
-  if (tab.writeFrame) {
-    cancelAnimationFrame(tab.writeFrame);
-    tab.writeFrame = undefined;
-  }
   const chunks = tab.dataBuffer.splice(0);
   for (const chunk of chunks) {
     tab.terminal.write(chunk);
   }
-}
-
-function writeTerminalData(tab: TabInfo, data: Uint8Array) {
-  const segments = splitSyncUpdateSequences(tab, ensureUint8Array(data));
-  for (const segment of segments) {
-    if (segment.type === "start") {
-      tab.syncUpdateMode = true;
-      if (TERMINAL_DEBUG) {
-        console.log("[TerminalDebug] sync update start", { tabId: tab.id });
-      }
-      continue;
-    }
-    if (segment.type === "end") {
-      if (TERMINAL_DEBUG) {
-        console.log("[TerminalDebug] sync update end", {
-          tabId: tab.id,
-          bufferedChunks: tab.syncUpdateBuffer?.length || 0,
-          bufferedBytes: (tab.syncUpdateBuffer || []).reduce((sum, chunk) => sum + chunk.length, 0),
-        });
-      }
-      tab.syncUpdateMode = false;
-      const buffered = tab.syncUpdateBuffer?.splice(0) || [];
-      if (buffered.length > 0) {
-        queueTerminalChunk(tab, concatUint8Arrays(buffered));
-        if (tab.writeTimer) {
-          clearTimeout(tab.writeTimer);
-          tab.writeTimer = undefined;
-        }
-        flushTerminalWrite(tab);
-      }
-      continue;
-    }
-    if (segment.data.length === 0) continue;
-    if (tab.syncUpdateMode) {
-      if (!tab.syncUpdateBuffer) tab.syncUpdateBuffer = [];
-      tab.syncUpdateBuffer.push(segment.data);
-      if (TERMINAL_VERBOSE_DEBUG) {
-        console.log("[TerminalDebug] sync update buffer", {
-          tabId: tab.id,
-          bytes: segment.data.length,
-          bufferedChunks: tab.syncUpdateBuffer.length,
-          bufferedBytes: tab.syncUpdateBuffer.reduce((sum, chunk) => sum + chunk.length, 0),
-        });
-      }
-      continue;
-    }
-    queueTerminalChunk(tab, segment.data);
-  }
-}
-
-function queueTerminalChunk(tab: TabInfo, data: Uint8Array) {
-  tab.dataBuffer.push(data.slice());
-  if (!tab.writeStartedAt) tab.writeStartedAt = performance.now();
-  const ansiHints = scanAnsiHints(data);
-  if (TERMINAL_VERBOSE_DEBUG) {
-    console.log("[TerminalDebug] pty chunk", {
-      tabId: tab.id,
-      bytes: data.length,
-      bufferedChunks: tab.dataBuffer.length,
-      bufferedBytes: tab.dataBuffer.reduce((sum, chunk) => sum + chunk.length, 0),
-      sinceInputMs: tab.lastUserInputAt ? Math.round(performance.now() - tab.lastUserInputAt) : null,
-      ansiHints,
-      syncUpdateMode: !!tab.syncUpdateMode,
-    });
-  }
-  scheduleTerminalWrite(tab);
-}
-
-function ensureUint8Array(data: Uint8Array | number[] | ArrayBuffer) {
-  if (data instanceof Uint8Array) return data;
-  if (data instanceof ArrayBuffer) return new Uint8Array(data);
-  return Uint8Array.from(data);
-}
-
-function concatUint8Arrays(chunks: Uint8Array[]) {
-  if (chunks.length === 0) return new Uint8Array();
-  if (chunks.length === 1) return chunks[0].slice();
-  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const merged = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return merged;
-}
-
-function matchesSequence(data: Uint8Array, offset: number, sequence: Uint8Array) {
-  if (offset + sequence.length > data.length) return false;
-  for (let i = 0; i < sequence.length; i++) {
-    if (data[offset + i] !== sequence[i]) return false;
-  }
-  return true;
-}
-
-function findSyncSequenceRemainderLength(data: Uint8Array) {
-  const maxLength = Math.min(SYNC_UPDATE_START_BYTES.length - 1, data.length);
-  for (let len = maxLength; len > 0; len--) {
-    let startMatch = true;
-    let endMatch = true;
-    for (let i = 0; i < len; i++) {
-      const value = data[data.length - len + i];
-      if (value !== SYNC_UPDATE_START_BYTES[i]) startMatch = false;
-      if (value !== SYNC_UPDATE_END_BYTES[i]) endMatch = false;
-      if (!startMatch && !endMatch) break;
-    }
-    if (startMatch || endMatch) return len;
-  }
-  return 0;
-}
-
-function splitSyncUpdateSequences(tab: TabInfo, data: Uint8Array) {
-  const text = tab.syncSequenceRemainder
-    ? concatUint8Arrays([tab.syncSequenceRemainder, data])
-    : data;
-  const segments: Array<{ type: "data" | "start" | "end"; data: Uint8Array }> = [];
-  let cursor = 0;
-  let offset = 0;
-  while (offset < text.length) {
-    let nextType: "start" | "end" | null = null;
-    let nextLength = 0;
-    if (matchesSequence(text, offset, SYNC_UPDATE_START_BYTES)) {
-      nextType = "start";
-      nextLength = SYNC_UPDATE_START_BYTES.length;
-    } else if (matchesSequence(text, offset, SYNC_UPDATE_END_BYTES)) {
-      nextType = "end";
-      nextLength = SYNC_UPDATE_END_BYTES.length;
-    }
-    if (!nextType) {
-      offset++;
-      continue;
-    }
-    if (offset > cursor) {
-      segments.push({ type: "data", data: text.slice(cursor, offset) });
-    }
-    segments.push({ type: nextType, data: new Uint8Array() });
-    offset += nextLength;
-    cursor = offset;
-  }
-  let remainder = text.subarray(cursor);
-  const remainderLength = findSyncSequenceRemainderLength(remainder);
-  if (remainderLength > 0) {
-    tab.syncSequenceRemainder = remainder.slice(remainder.length - remainderLength);
-    remainder = remainder.slice(0, remainder.length - remainderLength);
-  } else {
-    tab.syncSequenceRemainder = undefined;
-  }
-  if (remainder.length > 0) {
-    segments.push({ type: "data", data: remainder.slice() });
-  }
-  return segments;
-}
-
-function scheduleTerminalWrite(tab: TabInfo) {
-  if (tab.writeTimer) clearTimeout(tab.writeTimer);
-  const elapsed = tab.writeStartedAt ? performance.now() - tab.writeStartedAt : 0;
-  const delay = elapsed >= TERMINAL_WRITE_MAX_WAIT_MS ? 0 : TERMINAL_WRITE_QUIET_MS;
-  tab.writeTimer = setTimeout(() => {
-    tab.writeTimer = undefined;
-    flushTerminalWrite(tab);
-  }, delay);
-}
-
-function flushTerminalWrite(tab: TabInfo) {
-  if (tab.writeFrame || tab.dataBuffer.length === 0) return;
-  tab.writeFrame = requestAnimationFrame(() => {
-    tab.writeFrame = undefined;
-    if (!tab.terminal || !tab.active) return;
-    const chunks = tab.dataBuffer.splice(0);
-    tab.writeStartedAt = undefined;
-    const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    const combined = new Uint8Array(bytes);
-    let offset = 0;
-    for (const chunk of chunks) {
-      combined.set(chunk, offset);
-      offset += chunk.length;
-    }
-    if (TERMINAL_VERBOSE_DEBUG) {
-      console.log("[TerminalDebug] write flush", {
-        tabId: tab.id,
-        chunks: chunks.length,
-        bytes,
-        sinceInputMs: tab.lastUserInputAt ? Math.round(performance.now() - tab.lastUserInputAt) : null,
-      });
-    }
-    tab.terminal.write(combined);
-  });
 }
 
 function terminalFontOptions() {
@@ -244,36 +32,6 @@ function terminalFontOptions() {
     fontFamily: '"JetBrains Mono", "Fira Code", "DejaVu Sans Mono", monospace',
     fontWeight: "normal" as const,
     fontWeightBold: "bold" as const,
-  };
-}
-
-function terminalPlatformOptions() {
-  const platform = navigator.platform.toLowerCase();
-  if (platform.includes("win")) {
-    return {
-      windowsPty: {
-        backend: "conpty" as const,
-        buildNumber: 19045,
-      },
-    };
-  }
-  return {};
-}
-
-function scanAnsiHints(data: Uint8Array) {
-  if (!TERMINAL_VERBOSE_DEBUG) return null;
-  let text = "";
-  try {
-    text = new TextDecoder().decode(data);
-  } catch (_) {
-    return null;
-  }
-  return {
-    clearScreen: text.includes("\x1b[2J") || text.includes("\x1b[J"),
-    clearScrollback: text.includes("\x1b[3J"),
-    homeCursor: text.includes("\x1b[H") || text.includes("\x1b[f"),
-    altEnter: text.includes("\x1b[?1049h") || text.includes("\x1b[?47h"),
-    altLeave: text.includes("\x1b[?1049l") || text.includes("\x1b[?47l"),
   };
 }
 
@@ -308,34 +66,9 @@ function schedulePtyResize(tab: TabInfo, cols = tab.terminal.cols, rows = tab.te
 export function refitTerminal(tab: TabInfo) {
   if (!tab.fitAddon || !tab.terminal || !tab.pty || tab.containerEl.style.visibility === "hidden") return;
   const bounds = tab.containerEl.getBoundingClientRect();
-  const width = Math.round(bounds.width);
-  const height = Math.round(bounds.height);
-  if (width <= 0 || height <= 0) return;
-  const dimensions = tab.fitAddon.proposeDimensions();
-  if (!dimensions || isNaN(dimensions.cols) || isNaN(dimensions.rows)) return;
-  if (
-    tab.lastFitWidth === width &&
-    tab.lastFitHeight === height &&
-    tab.terminal.cols === dimensions.cols &&
-    tab.terminal.rows === dimensions.rows
-  ) {
-    return;
-  }
-  if (TERMINAL_VERBOSE_DEBUG) {
-    console.log("[TerminalDebug] refit", {
-      tabId: tab.id,
-      width,
-      height,
-      prevWidth: tab.lastFitWidth ?? null,
-      prevHeight: tab.lastFitHeight ?? null,
-      cols: dimensions.cols,
-      rows: dimensions.rows,
-    });
-  }
+  if (bounds.width <= 0 || bounds.height <= 0) return;
   try {
     tab.fitAddon.fit();
-    tab.lastFitWidth = width;
-    tab.lastFitHeight = height;
     tab.terminal.refresh(0, Math.max(0, tab.terminal.rows - 1));
   } catch (_) {
     /* ignore */
@@ -344,12 +77,6 @@ export function refitTerminal(tab: TabInfo) {
 
 export function scheduleTerminalRefit(tab: TabInfo, delay = 80) {
   if (!tab.terminal || tab.containerEl.style.visibility === "hidden") return;
-  if (TERMINAL_VERBOSE_DEBUG) {
-    console.log("[TerminalDebug] schedule refit", {
-      tabId: tab.id,
-      delay,
-    });
-  }
 
   if (!tab.resizeFrame) {
     tab.resizeFrame = requestAnimationFrame(() => {
@@ -371,9 +98,6 @@ export function scheduleTerminalRefit(tab: TabInfo, delay = 80) {
 
 export function repaintTerminal(tab: TabInfo) {
   if (!tab.terminal || tab.containerEl.style.visibility === "hidden") return;
-  if (TERMINAL_VERBOSE_DEBUG) {
-    console.log("[TerminalDebug] repaint", { tabId: tab.id });
-  }
   if (tab.resizeFrame) cancelAnimationFrame(tab.resizeFrame);
   tab.resizeFrame = requestAnimationFrame(() => {
     tab.resizeFrame = undefined;
@@ -417,14 +141,10 @@ export function createTerminalTab(
   options?: { sessionId?: string; cwd?: string; workspacePath?: string; shell?: string; command?: { bin: string; args: string[] } },
 ): TabInfo {
   const fontOptions = terminalFontOptions();
-  const platformOptions = terminalPlatformOptions();
-  const cmdBin = options?.command?.bin || options?.shell || "zsh";
-  const cmdArgs = options?.command?.args || [];
   const terminal = new Terminal({
     cursorBlink: true,
     fontSize: 13,
     ...fontOptions,
-    ...platformOptions,
     drawBoldTextInBrightColors: false,
     theme: TERMINAL_THEME,
     allowProposedApi: true,
@@ -450,6 +170,8 @@ export function createTerminalTab(
   try {
     const spawnOpts: Record<string, unknown> = { cols: terminal.cols, rows: terminal.rows };
     if (options?.cwd) spawnOpts.cwd = options.cwd;
+    const cmdBin = options?.command?.bin || options?.shell || "zsh";
+    const cmdArgs = options?.command?.args || [];
     if (options?.command) {
       pty = spawn(cmdBin, cmdArgs, spawnOpts);
     } else {
@@ -458,15 +180,6 @@ export function createTerminalTab(
 
     const ptyInit: Promise<number> = (pty as any)._init as Promise<number>;
     console.log(`[Terminal] tab ${tabId} spawning ${cmdBin} ${cmdArgs.join(" ")} cwd=${options?.cwd}`);
-    if (TERMINAL_DEBUG) {
-      console.log("[TerminalDebug] create", {
-        tabId,
-        command: cmdBin,
-        args: cmdArgs,
-        scrollback: terminal.options.scrollback,
-        windowsPty: (terminal.options as any).windowsPty || null,
-      });
-    }
     ptyInit
       .then((pid: number) => {
         console.log(`[Terminal] tab ${tabId} pid=${pid} ok`);
@@ -482,21 +195,13 @@ export function createTerminalTab(
 
     pty.onData((data: Uint8Array) => {
       if (tabInfo.active) {
-        writeTerminalData(tabInfo, data);
+        terminal.write(data);
       } else {
         tabInfo.dataBuffer.push(data.slice());
       }
     });
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-      if (
-        event.type === "keydown" &&
-        event.key === "Enter" &&
-        event.shiftKey &&
-        !event.altKey &&
-        !event.ctrlKey &&
-        !event.metaKey &&
-        !event.isComposing
-      ) {
+      if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
         onPtyWrite(tabId, "\x1b[13;2u");
         event.preventDefault();
         return false;
@@ -504,39 +209,8 @@ export function createTerminalTab(
       return true;
     });
     terminal.onData((data: string) => {
-      tabInfo.lastUserInputAt = performance.now();
-      if (TERMINAL_VERBOSE_DEBUG) {
-        console.log("[TerminalDebug] input", {
-          tabId,
-          length: data.length,
-          preview: JSON.stringify(data).slice(0, 120),
-        });
-      }
       onPtyWrite(tabId, data);
     });
-    if (TERMINAL_VERBOSE_DEBUG) {
-      terminal.onWriteParsed(() => {
-        const activeBuffer = (terminal as any).buffer?.active;
-        console.log("[TerminalDebug] parsed", {
-          tabId,
-          cursorY: activeBuffer?.cursorY ?? null,
-          viewportY: activeBuffer?.viewportY ?? null,
-          baseY: activeBuffer?.baseY ?? null,
-          length: activeBuffer?.length ?? null,
-        });
-      });
-      terminal.onScroll((position: number) => {
-        console.log("[TerminalDebug] scroll", { tabId, position });
-      });
-      terminal.onRender((range) => {
-        console.log("[TerminalDebug] render", {
-          tabId,
-          start: range.start,
-          end: range.end,
-          sinceInputMs: tabInfo.lastUserInputAt ? Math.round(performance.now() - tabInfo.lastUserInputAt) : null,
-        });
-      });
-    }
     pty.onExit((exit) => {
       console.log(`[Terminal] pty exited tab ${tabId} pid=${pty?.pid} code=`, exit.exitCode, "signal:", exit.signal);
       terminal.write(`\r\n${t("process.exited")}\r\n`);
@@ -556,27 +230,12 @@ export function createTerminalTab(
   tabInfo.containerEl = wrapper;
 
   tabInfo.resizeObserver = new ResizeObserver(() => {
-    if (TERMINAL_VERBOSE_DEBUG) {
-      const bounds = wrapper.getBoundingClientRect();
-      console.log("[TerminalDebug] resize observer", {
-        tabId,
-        width: Math.round(bounds.width),
-        height: Math.round(bounds.height),
-      });
-    }
     scheduleTerminalRefit(tabInfo);
   });
   tabInfo.resizeObserver.observe(wrapper);
 
   terminal.onResize(() => {
     try {
-      if (TERMINAL_VERBOSE_DEBUG) {
-        console.log("[TerminalDebug] terminal resize", {
-          tabId,
-          cols: terminal.cols,
-          rows: terminal.rows,
-        });
-      }
       schedulePtyResize(tabInfo);
     } catch (_) {
       /* ignore */
