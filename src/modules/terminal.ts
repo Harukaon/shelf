@@ -1,6 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { CanvasAddon } from "@xterm/addon-canvas";
 import { spawn, IPty } from "./pty";
 import { PTYDataQueue } from "./pty-queue";
 import { FlowControl } from "./flow-control";
@@ -318,9 +319,20 @@ export function createTerminalTab(
   terminal.open(wrapper);
   tabInfo.containerEl = wrapper;
 
-  // WebGL renderer: 裸调试终端不加载 WebGL 也能在 Windows 上稳跑。
-  // 之前在 Windows 上启用 WebGL，疑似在 visibility:hidden 的 wrapper 上
-  // 初始化 canvas，导致渲染状态异常。两端都用默认 DOM 渲染器。
+  // 渲染器：Windows 上启用 Canvas（比 DOM 快 10~30x）。
+  // 必须在 terminal.open() 之后、wrapper 已挂 DOM 且可见时加载，
+  // 否则 canvas 拿不到字体度量。Tabby 的策略：能 WebGL 就 WebGL，
+  // 不行就 Canvas，从来不用 DOM。我们暂时只用 Canvas（WebGL 之前出过
+  // 事，先稳为主）。macOS 走默认 DOM，用户确认稳定，不动。
+  if (isWin) {
+    try {
+      const canvas = new CanvasAddon();
+      terminal.loadAddon(canvas);
+      console.log(`[Terminal] tab ${tabId} canvas renderer enabled`);
+    } catch (e) {
+      console.warn(`[Terminal] tab ${tabId} canvas renderer failed, falling back to DOM:`, e);
+    }
+  }
 
   tabInfo.resizeObserver = new ResizeObserver(() => {
     scheduleTerminalRefit(tabInfo);
