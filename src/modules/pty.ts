@@ -170,7 +170,12 @@ class Pty implements IPty {
   }
 
   ack(bytes: number): void {
-    if (this._closed || !this.pid || bytes <= 0) return;
+    // NOTE: do NOT guard on `!this.pid` — pid=0 is a valid id (the first
+    // spawned PTY), and `!0` would silently swallow every ack on that
+    // session, causing the backend reader to pile up against HIGH_WATERMARK
+    // and stall. Data only arrives via Channel after spawn resolved, so
+    // this.pid is already correct here.
+    if (this._closed || bytes <= 0) return;
     invoke("pty_ack", { pid: this.pid, bytes }).catch((e) =>
       console.error(`[PTY pid=${this.pid}] ack error:`, e)
     );

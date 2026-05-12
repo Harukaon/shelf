@@ -3,7 +3,7 @@ use std::{
     ffi::OsString,
     io::Read,
     sync::{
-        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
         Arc, Condvar, Mutex,
     },
     thread,
@@ -33,6 +33,7 @@ struct PtySession {
     child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     writer: Mutex<Box<dyn std::io::Write + Send>>,
     pending: AtomicUsize,
+    ack_count: AtomicU64,
     flow_pair: Arc<(Mutex<bool>, Condvar)>,
     shutdown: AtomicBool,
     reader_closed: AtomicBool,
@@ -148,10 +149,14 @@ fn reader_thread(
         emit_count += 1;
         total_emitted += size as u64;
 
-        eprintln!(
-            "[pty pid={}] reader: emit#{} size={} pending={} carry={} total={}B",
-            pid, emit_count, size, new_pending, carry.len(), total_emitted
-        );
+        // Throttle per-chunk log: first 5 chunks, then every 100. Critical
+        // events (pause/resume/ack-crossing/errors) below are always logged.
+        if emit_count <= 5 || emit_count % 100 == 0 {
+            eprintln!(
+                "[pty pid={}] reader: emit#{} size={} pending={} carry={} total={}B",
+                pid, emit_count, size, new_pending, carry.len(), total_emitted
+            );
+        }
 
         if let Err(e) = on_data.send(InvokeResponseBody::Raw(to_send)) {
             eprintln!("[pty pid={}] reader: channel send failed: {}", pid, e);
@@ -262,6 +267,7 @@ pub async fn pty_spawn<R: Runtime>(
         child_killer: Mutex::new(child_killer),
         writer: Mutex::new(writer),
         pending: AtomicUsize::new(0),
+        ack_count: AtomicU64::new(0),
         flow_pair: Arc::new((Mutex::new(false), Condvar::new())),
         shutdown: AtomicBool::new(false),
         reader_closed: AtomicBool::new(false),
@@ -326,6 +332,7 @@ pub async fn pty_ack(
     }
     let prev = session.pending.fetch_sub(bytes, Ordering::SeqCst);
     let now = prev.saturating_sub(bytes);
+    let count = session.ack_count.fetch_add(1, Ordering::Relaxed) + 1;
     // Resume reader if we crossed below the low watermark
     let crossed = prev > LOW_WATERMARK && now <= LOW_WATERMARK;
     if crossed {
@@ -334,11 +341,14 @@ pub async fn pty_ack(
         *paused = false;
         cvar.notify_all();
         eprintln!(
-            "[pty pid={}] ack {} pending {}->{} (LOW={}) CROSSED, notify",
-            pid, bytes, prev, now, LOW_WATERMARK
+            "[pty pid={}] ack#{} {} pending {}->{} (LOW={}) CROSSED, notify",
+            pid, count, bytes, prev, now, LOW_WATERMARK
         );
-    } else {
-        eprintln!("[pty pid={}] ack {} pending {}->{}", pid, bytes, prev, now);
+    } else if count <= 5 || count % 100 == 0 {
+        eprintln!(
+            "[pty pid={}] ack#{} {} pending {}->{}",
+            pid, count, bytes, prev, now
+        );
     }
     Ok(())
 }
