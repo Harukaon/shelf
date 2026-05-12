@@ -38,20 +38,10 @@ type ResizeDirection = "East" | "North" | "NorthEast" | "NorthWest" | "South" | 
 // renderer flickers ~2-3 times/sec; on macOS it's stable, so we only inject
 // the var on Windows to avoid changing macOS UX (alt-screen mode disables
 // Cmd+F search etc.).
-//
-// We also impersonate VS Code's TERM_PROGRAM on Windows. Claude Code's
-// renderer has fast paths for known terminals (link handling, mouse
-// integration, possibly synchronized-output detection). With TERM_PROGRAM=Shelf
-// it falls back to the most conservative path. Since we are an xterm.js host
-// just like VS Code, claiming TERM_PROGRAM=vscode lines us up with the
-// well-tested integration path. macOS is left untouched.
 function claudeSpawnEnv(): Record<string, string> | undefined {
   if (navigator.platform.toLowerCase().includes("win")) {
-    console.log("[Shelf] platform=Windows, injecting CLAUDE_CODE_NO_FLICKER=1 + TERM_PROGRAM=vscode");
-    return {
-      CLAUDE_CODE_NO_FLICKER: "1",
-      TERM_PROGRAM: "vscode",
-    };
+    console.log("[Shelf] platform=Windows, injecting CLAUDE_CODE_NO_FLICKER=1");
+    return { CLAUDE_CODE_NO_FLICKER: "1" };
   }
   return undefined;
 }

@@ -1,7 +1,6 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { spawn, IPty } from "./pty";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
@@ -162,23 +161,6 @@ function tryEnableWebgl(tabId: string, terminal: Terminal): WebglAddon | null {
   }
 }
 
-function tryEnableUnicode11(tabId: string, terminal: Terminal): Unicode11Addon | null {
-  // xterm.js defaults to Unicode 6 (2010) width tables. Windows Terminal /
-  // ConPTY use modern Unicode 11+. Without this addon, CJK / emoji widths
-  // drift one cell from what ConPTY thinks, accumulating to cursor errors
-  // and a chronically misaligned input box.
-  try {
-    const addon = new Unicode11Addon();
-    terminal.loadAddon(addon);
-    terminal.unicode.activeVersion = "11";
-    console.log(`[Terminal] tab ${tabId} unicode-11 width table active`);
-    return addon;
-  } catch (e) {
-    console.warn(`[Terminal] tab ${tabId} unicode-11 addon failed:`, e);
-    return null;
-  }
-}
-
 export function createTerminalTab(
   tabId: string,
   title: string,
@@ -194,7 +176,6 @@ export function createTerminalTab(
   },
 ): TabInfo {
   const fontOptions = terminalFontOptions();
-  const isWin = isWindows();
   const terminal = new Terminal({
     cursorBlink: true,
     fontSize: 13,
@@ -202,12 +183,6 @@ export function createTerminalTab(
     drawBoldTextInBrightColors: false,
     theme: TERMINAL_THEME,
     allowProposedApi: true,
-    // Tell xterm.js it's talking to ConPTY so it applies Windows-specific
-    // compensation (cls/clear viewport reset, resize cursor adjustment).
-    // VS Code does the equivalent via setIsWindowsPty(). Windows only.
-    ...(isWin
-      ? { windowsPty: { backend: "conpty" as const } }
-      : {}),
   });
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
@@ -303,15 +278,13 @@ export function createTerminalTab(
   terminalContainer.appendChild(wrapper);
   tabInfo.containerEl = wrapper;
 
-  // WebGL addon + Unicode 11 width table: only on Windows where the default
-  // DOM renderer is the dominant CPU/flicker bottleneck and the default
-  // Unicode 6 width table causes cursor drift vs ConPTY. macOS works fine
-  // with defaults, so we don't touch it (keep what's stable stable).
-  if (isWin) {
+  // WebGL addon: only on Windows where the default DOM renderer is the
+  // dominant CPU/flicker bottleneck. macOS works fine with the default
+  // renderer, so we don't touch it (keep what's stable stable).
+  if (isWindows()) {
     tryEnableWebgl(tabId, terminal);
-    tryEnableUnicode11(tabId, terminal);
   } else {
-    console.log(`[Terminal] tab ${tabId} non-Windows platform, keeping default renderer + Unicode 6`);
+    console.log(`[Terminal] tab ${tabId} non-Windows platform, keeping default renderer`);
   }
 
   tabInfo.resizeObserver = new ResizeObserver(() => {
