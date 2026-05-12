@@ -2,6 +2,8 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { spawn, IPty } from "./pty";
+import { PTYDataQueue } from "./pty-queue";
+import { FlowControl } from "./flow-control";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
 
@@ -232,19 +234,42 @@ export function createTerminalTab(
 
     // 数据通路按平台分叉，避免影响 macOS。
     //
-    // Windows: 完全对齐裸终端调试器（已证明能稳跑）—— 直接 write，立即 ack。
-    //   不做 rAF 合批、不等 xterm.write 的 callback。
+    // Windows: 全套抄 Tabby ——
+    //   1. 立刻 ack 给 Rust 后端（pty.ackData 模式，对应 Tabby session.ts:130）
+    //   2. PTYDataQueue 合并零散 chunk 成 ≤100KB 的大块，UTF-8 安全切分
+    //   3. FlowControl 限制 xterm.write 速率，防止 xterm 内部解析队列爆
+    //
     // macOS / Linux: 维持原来稳定的写法 —— write(data, callback)，callback
-    //   触发后再 ack。这是用户确认 macOS 稳定的实现。
+    //   触发后再 ack。用户确认 macOS 稳定，不动。
     const ptyRef = pty;
     if (isWin) {
+      const flowControl = new FlowControl(terminal);
+      let queue: PTYDataQueue;
+      // 先声明再赋值，因为 emit 回调里要引用 queue（自己 ack 自己）。
+      // queue 的 emit 把合并后的大块塞给 flowControl；
+      // 立刻 ack 是为了让 queue 的内部 delta 不会卡死（真正的限流由 flowControl 做）。
+      queue = new PTYDataQueue(
+        (combined) => {
+          if (tabInfo.active) {
+            flowControl.write(combined);
+          } else {
+            tabInfo.dataBuffer.push(combined);
+          }
+          queue.ack(combined.byteLength);
+        },
+        () => {},
+        () => {},
+      );
+
       pty.onData((data: Uint8Array) => {
-        if (tabInfo.active) {
-          terminal.write(data);
-        } else {
-          tabInfo.dataBuffer.push(data.slice());
-        }
         try { ptyRef.ack(data.byteLength); } catch (_) {}
+        queue.push(data);
+      });
+
+      // 退出时清理 FlowControl 的等待 promise + queue 的 timer
+      pty.onExit(() => {
+        try { flowControl.dispose(); } catch (_) {}
+        try { queue.dispose(); } catch (_) {}
       });
     } else {
       pty.onData((data: Uint8Array) => {
