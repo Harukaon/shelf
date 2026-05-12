@@ -1,6 +1,5 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { spawn, IPty } from "./pty";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
@@ -145,22 +144,6 @@ const TERMINAL_THEME = {
   brightWhite: "#f1f3f5",
 };
 
-function tryEnableWebgl(tabId: string, terminal: Terminal): WebglAddon | null {
-  try {
-    const addon = new WebglAddon();
-    addon.onContextLoss(() => {
-      console.warn(`[Terminal] tab ${tabId} webgl context lost — disposing addon, falling back to DOM renderer`);
-      try { addon.dispose(); } catch (_) {}
-    });
-    terminal.loadAddon(addon);
-    console.log(`[Terminal] tab ${tabId} webgl renderer enabled`);
-    return addon;
-  } catch (e) {
-    console.warn(`[Terminal] tab ${tabId} webgl renderer NOT available, using default DOM renderer:`, e);
-    return null;
-  }
-}
-
 export function createTerminalTab(
   tabId: string,
   title: string,
@@ -231,60 +214,36 @@ export function createTerminalTab(
 
     tabInfo.pty = pty;
 
-    // rAF-batched data path: collect every chunk that arrives during a single
-    // animation frame (~16ms) into one combined buffer, then call terminal.write
-    // ONCE per frame. This is what VS Code (TerminalDataBufferer) and Windows
-    // Terminal do internally: the renderer runs at display refresh rate
-    // regardless of how fast the producer emits bytes. Without this, Claude's
-    // classic-mode redraws (hundreds of small ANSI chunks per state change)
-    // each trigger a separate xterm.js parse + render schedule, swamping the
-    // browser compositor.
+    // 数据通路按平台分叉，避免影响 macOS。
+    //
+    // Windows: 完全对齐裸终端调试器（已证明能稳跑）—— 直接 write，立即 ack。
+    //   不做 rAF 合批、不等 xterm.write 的 callback。
+    // macOS / Linux: 维持原来稳定的写法 —— write(data, callback)，callback
+    //   触发后再 ack。这是用户确认 macOS 稳定的实现。
     const ptyRef = pty;
-    let pendingChunks: Uint8Array[] = [];
-    let pendingBytes = 0;
-    let frameScheduled = false;
-
-    const flushPending = () => {
-      frameScheduled = false;
-      if (pendingChunks.length === 0) return;
-      const total = pendingBytes;
-      // Combine accumulated chunks into one buffer.
-      let combined: Uint8Array;
-      if (pendingChunks.length === 1) {
-        combined = pendingChunks[0];
-      } else {
-        combined = new Uint8Array(total);
-        let offset = 0;
-        for (const c of pendingChunks) {
-          combined.set(c, offset);
-          offset += c.byteLength;
+    const isWinPlatform = isWindows();
+    if (isWinPlatform) {
+      pty.onData((data: Uint8Array) => {
+        if (tabInfo.active) {
+          terminal.write(data);
+        } else {
+          tabInfo.dataBuffer.push(data.slice());
         }
-      }
-      pendingChunks = [];
-      pendingBytes = 0;
-
-      if (tabInfo.active) {
-        terminal.write(combined, () => {
-          try { ptyRef.ack(total); } catch (_) {}
-        });
-      } else {
-        // Inactive tab: stash in dataBuffer; ack immediately so backend keeps
-        // flowing (active tabs are what we backpressure on).
-        tabInfo.dataBuffer.push(combined);
-        try { ptyRef.ack(total); } catch (_) {}
-      }
-    };
-
-    pty.onData((data: Uint8Array) => {
-      // Copy the chunk so we can safely reference it across the rAF boundary
-      // without depending on the underlying IPC buffer's lifetime.
-      pendingChunks.push(data.slice());
-      pendingBytes += data.byteLength;
-      if (!frameScheduled) {
-        frameScheduled = true;
-        requestAnimationFrame(flushPending);
-      }
-    });
+        try { ptyRef.ack(data.byteLength); } catch (_) {}
+      });
+    } else {
+      pty.onData((data: Uint8Array) => {
+        const size = data.byteLength;
+        if (tabInfo.active) {
+          terminal.write(data, () => {
+            try { ptyRef.ack(size); } catch (_) {}
+          });
+        } else {
+          tabInfo.dataBuffer.push(data.slice());
+          try { ptyRef.ack(size); } catch (_) {}
+        }
+      });
+    }
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
         onPtyWrite(tabId, "\x1b[13;2u");
@@ -314,14 +273,9 @@ export function createTerminalTab(
   terminalContainer.appendChild(wrapper);
   tabInfo.containerEl = wrapper;
 
-  // WebGL addon: only on Windows where the default DOM renderer is the
-  // dominant CPU/flicker bottleneck. macOS works fine with the default
-  // renderer, so we don't touch it (keep what's stable stable).
-  if (isWindows()) {
-    tryEnableWebgl(tabId, terminal);
-  } else {
-    console.log(`[Terminal] tab ${tabId} non-Windows platform, keeping default renderer`);
-  }
+  // WebGL renderer: 裸调试终端不加载 WebGL 也能在 Windows 上稳跑。
+  // 之前在 Windows 上启用 WebGL，疑似在 visibility:hidden 的 wrapper 上
+  // 初始化 canvas，导致渲染状态异常。两端都用默认 DOM 渲染器。
 
   tabInfo.resizeObserver = new ResizeObserver(() => {
     scheduleTerminalRefit(tabInfo);
