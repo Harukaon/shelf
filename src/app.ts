@@ -99,11 +99,7 @@ class App {
     const debugBtn = document.getElementById("debug-term-btn");
     if (debugBtn) {
       debugBtn.addEventListener("click", () => {
-        // Default to the claude binary if known, in the selected workspace if any.
-        openDebugTerminal({
-          defaultBin: this.claudePath || "claude",
-          defaultCwd: this.selectedWorkspace || undefined,
-        });
+        openDebugTerminal({ defaultCwd: this.selectedWorkspace || undefined });
       });
     }
     setupFileTreeContextMenu(this.fileTreeEl, () => this._refreshCurrentFileTree());
