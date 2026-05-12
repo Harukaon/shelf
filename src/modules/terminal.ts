@@ -1,5 +1,6 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { spawn, IPty } from "./pty";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
@@ -52,15 +53,26 @@ function terminalPixelSize(tab: TabInfo) {
   };
 }
 
+function isWindows(): boolean {
+  return navigator.platform.toLowerCase().includes("win");
+}
+
 function schedulePtyResize(tab: TabInfo, cols = tab.terminal.cols, rows = tab.terminal.rows) {
   if (!tab.pty || !tab.terminal || cols <= 0 || rows <= 0) return;
   if (tab.ptyResizeTimer) clearTimeout(tab.ptyResizeTimer);
+  // Windows: ConPTY redraws the whole viewport on each resize, so we use a
+  // slightly longer debounce to coalesce drag events and reduce flicker.
+  // macOS / Linux: PTY resize is cheap, keep the original 100ms.
+  const debounce = isWindows() ? 150 : 100;
   tab.ptyResizeTimer = setTimeout(() => {
     tab.ptyResizeTimer = undefined;
     if (!tab.pty || !tab.terminal) return;
     const pixels = terminalPixelSize(tab);
-    tab.pty.resize(cols, rows, pixels.width, pixels.height);
-  }, 100);
+    const c = Math.max(1, cols);
+    const r = Math.max(1, rows);
+    console.log(`[Terminal] tab ${tab.id} pty_resize cols=${c} rows=${r} px=${pixels.width}x${pixels.height}`);
+    tab.pty.resize(c, r, pixels.width, pixels.height);
+  }, debounce);
 }
 
 export function refitTerminal(tab: TabInfo) {
@@ -133,12 +145,35 @@ const TERMINAL_THEME = {
   brightWhite: "#f1f3f5",
 };
 
+function tryEnableWebgl(tabId: string, terminal: Terminal): WebglAddon | null {
+  try {
+    const addon = new WebglAddon();
+    addon.onContextLoss(() => {
+      console.warn(`[Terminal] tab ${tabId} webgl context lost — disposing addon, falling back to DOM renderer`);
+      try { addon.dispose(); } catch (_) {}
+    });
+    terminal.loadAddon(addon);
+    console.log(`[Terminal] tab ${tabId} webgl renderer enabled`);
+    return addon;
+  } catch (e) {
+    console.warn(`[Terminal] tab ${tabId} webgl renderer NOT available, using default DOM renderer:`, e);
+    return null;
+  }
+}
+
 export function createTerminalTab(
   tabId: string,
   title: string,
   terminalContainer: HTMLElement,
   onPtyWrite: (tabId: string, data: string) => void,
-  options?: { sessionId?: string; cwd?: string; workspacePath?: string; shell?: string; command?: { bin: string; args: string[] } },
+  options?: {
+    sessionId?: string;
+    cwd?: string;
+    workspacePath?: string;
+    shell?: string;
+    command?: { bin: string; args: string[] };
+    env?: Record<string, string>;
+  },
 ): TabInfo {
   const fontOptions = terminalFontOptions();
   const terminal = new Terminal({
@@ -170,6 +205,7 @@ export function createTerminalTab(
   try {
     const spawnOpts: Record<string, unknown> = { cols: terminal.cols, rows: terminal.rows };
     if (options?.cwd) spawnOpts.cwd = options.cwd;
+    if (options?.env && Object.keys(options.env).length > 0) spawnOpts.env = options.env;
     const cmdBin = options?.command?.bin || options?.shell || "zsh";
     const cmdArgs = options?.command?.args || [];
     if (options?.command) {
@@ -179,7 +215,9 @@ export function createTerminalTab(
     }
 
     const ptyInit: Promise<number> = (pty as any)._init as Promise<number>;
-    console.log(`[Terminal] tab ${tabId} spawning ${cmdBin} ${cmdArgs.join(" ")} cwd=${options?.cwd}`);
+    console.log(
+      `[Terminal] tab ${tabId} spawning ${cmdBin} ${cmdArgs.join(" ")} cwd=${options?.cwd} envKeys=[${Object.keys(options?.env ?? {}).join(",")}]`
+    );
     ptyInit
       .then((pid: number) => {
         console.log(`[Terminal] tab ${tabId} pid=${pid} ok`);
@@ -193,11 +231,22 @@ export function createTerminalTab(
 
     tabInfo.pty = pty;
 
+    // Flow-controlled data path: terminal.write returns when xterm has parsed
+    // the chunk; in its callback we ack the bytes back to Rust so the backend
+    // can resume reading from PTY if it was paused at the high watermark.
+    const ptyRef = pty;
     pty.onData((data: Uint8Array) => {
+      const size = data.byteLength;
       if (tabInfo.active) {
-        terminal.write(data);
+        terminal.write(data, () => {
+          try { ptyRef.ack(size); } catch (_) {}
+        });
       } else {
+        // Inactive tab: buffer in memory. Ack immediately so backend keeps
+        // flowing (matches Tabby/VS Code behavior — inactive tabs do not
+        // backpressure the source).
         tabInfo.dataBuffer.push(data.slice());
+        try { ptyRef.ack(size); } catch (_) {}
       }
     });
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
@@ -228,6 +277,15 @@ export function createTerminalTab(
   terminal.open(wrapper);
   terminalContainer.appendChild(wrapper);
   tabInfo.containerEl = wrapper;
+
+  // WebGL addon: only on Windows where the default DOM renderer is the
+  // dominant CPU/flicker bottleneck. macOS works fine with the default
+  // renderer, so we don't touch it (keep what's stable stable).
+  if (isWindows()) {
+    tryEnableWebgl(tabId, terminal);
+  } else {
+    console.log(`[Terminal] tab ${tabId} non-Windows platform, keeping default renderer`);
+  }
 
   tabInfo.resizeObserver = new ResizeObserver(() => {
     scheduleTerminalRefit(tabInfo);
