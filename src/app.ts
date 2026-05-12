@@ -6,7 +6,6 @@ import { Session, FileEntry, TabInfo } from "./types";
 import { TabManager } from "./modules/tabs";
 import { WorkspaceManager } from "./modules/workspace";
 import { createTerminalTab, repaintTerminal, scheduleTerminalRefit, writeToPty } from "./modules/terminal";
-import { openDebugTerminal } from "./modules/debug-terminal";
 import { renderFileTree, clearFileCache, setupFileTreeContextMenu } from "./modules/files";
 import { setupDragDrop, setupPanelResize } from "./modules/dragdrop";
 import { t, setLang, getLang } from "./i18n";
@@ -33,19 +32,6 @@ type PendingClaudeTab = {
 };
 
 type ResizeDirection = "East" | "North" | "NorthEast" | "NorthWest" | "South" | "SouthEast" | "SouthWest" | "West";
-
-// Claude Code v2.1.88+ ships a flicker-free alt-screen renderer (`/tui fullscreen`)
-// gated by the CLAUDE_CODE_NO_FLICKER env var. On Windows the classic Ink
-// renderer flickers ~2-3 times/sec; on macOS it's stable, so we only inject
-// the var on Windows to avoid changing macOS UX (alt-screen mode disables
-// Cmd+F search etc.).
-function claudeSpawnEnv(): Record<string, string> | undefined {
-  if (navigator.platform.toLowerCase().includes("win")) {
-    console.log("[Shelf] platform=Windows, injecting CLAUDE_CODE_NO_FLICKER=1");
-    return { CLAUDE_CODE_NO_FLICKER: "1" };
-  }
-  return undefined;
-}
 
 class App {
   tabs!: TabManager;
@@ -96,12 +82,6 @@ class App {
     this.settingsBtn.addEventListener("click", () => this._showSettings());
     this.refreshBtn.addEventListener("click", () => this._refreshAllSessions());
     this.addWorkspaceBtn.addEventListener("click", () => this.ws.promptAdd());
-    const debugBtn = document.getElementById("debug-term-btn");
-    if (debugBtn) {
-      debugBtn.addEventListener("click", () => {
-        openDebugTerminal({ defaultCwd: this.selectedWorkspace || undefined });
-      });
-    }
     setupFileTreeContextMenu(this.fileTreeEl, () => this._refreshCurrentFileTree());
 
     this._setupPlatformWindowControls();
@@ -534,7 +514,7 @@ class App {
     const tabId = crypto.randomUUID();
     const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { cwd: wsPath, workspacePath: wsPath, command: { bin: this.claudePath, args: [] }, env: claudeSpawnEnv() },
+      { cwd: wsPath, workspacePath: wsPath, command: { bin: this.claudePath, args: [] } },
     );
     this.tabs.addTab(tab);
     this.pendingClaudeTabs.set(tabId, {
@@ -686,7 +666,7 @@ class App {
     const cwd = session.cwd || wsPath;
     const tab = createTerminalTab(tabId, session.display_title, this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { sessionId: session.id, cwd, workspacePath: wsPath, command: { bin: this.claudePath, args: ["--resume", session.id] }, env: claudeSpawnEnv() },
+      { sessionId: session.id, cwd, workspacePath: wsPath, command: { bin: this.claudePath, args: ["--resume", session.id] } },
     );
     this.tabs.addTab(tab);
     this.activeSessionIds.add(session.id);

@@ -1,10 +1,6 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { CanvasAddon } from "@xterm/addon-canvas";
 import { spawn, IPty } from "./pty";
-import { PTYDataQueue } from "./pty-queue";
-import { FlowControl } from "./flow-control";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
 
@@ -56,26 +52,15 @@ function terminalPixelSize(tab: TabInfo) {
   };
 }
 
-function isWindows(): boolean {
-  return navigator.platform.toLowerCase().includes("win");
-}
-
 function schedulePtyResize(tab: TabInfo, cols = tab.terminal.cols, rows = tab.terminal.rows) {
   if (!tab.pty || !tab.terminal || cols <= 0 || rows <= 0) return;
   if (tab.ptyResizeTimer) clearTimeout(tab.ptyResizeTimer);
-  // Windows: ConPTY redraws the whole viewport on each resize, so we use a
-  // slightly longer debounce to coalesce drag events and reduce flicker.
-  // macOS / Linux: PTY resize is cheap, keep the original 100ms.
-  const debounce = isWindows() ? 150 : 100;
   tab.ptyResizeTimer = setTimeout(() => {
     tab.ptyResizeTimer = undefined;
     if (!tab.pty || !tab.terminal) return;
     const pixels = terminalPixelSize(tab);
-    const c = Math.max(1, cols);
-    const r = Math.max(1, rows);
-    console.log(`[Terminal] tab ${tab.id} pty_resize cols=${c} rows=${r} px=${pixels.width}x${pixels.height}`);
-    tab.pty.resize(c, r, pixels.width, pixels.height);
-  }, debounce);
+    tab.pty.resize(cols, rows, pixels.width, pixels.height);
+  }, 100);
 }
 
 export function refitTerminal(tab: TabInfo) {
@@ -153,20 +138,9 @@ export function createTerminalTab(
   title: string,
   terminalContainer: HTMLElement,
   onPtyWrite: (tabId: string, data: string) => void,
-  options?: {
-    sessionId?: string;
-    cwd?: string;
-    workspacePath?: string;
-    shell?: string;
-    command?: { bin: string; args: string[] };
-    env?: Record<string, string>;
-  },
+  options?: { sessionId?: string; cwd?: string; workspacePath?: string; shell?: string; command?: { bin: string; args: string[] } },
 ): TabInfo {
   const fontOptions = terminalFontOptions();
-  const isWin = isWindows();
-  // 抄 Tabby 的写法：Windows 上把 windowsPty 选项告诉 xterm.js，让它启用
-  // ConPTY 专属补偿（cls 后视口对齐、resize 后光标位置修正等）。Tabby 跟
-  // VS Code 都在用这个。macOS 路径完全不传 windowsPty，行为不变。
   const terminal = new Terminal({
     cursorBlink: true,
     fontSize: 13,
@@ -174,20 +148,9 @@ export function createTerminalTab(
     drawBoldTextInBrightColors: false,
     theme: TERMINAL_THEME,
     allowProposedApi: true,
-    ...(isWin ? { windowsPty: { backend: "conpty" as const } } : {}),
   });
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
-  // Unicode 11 宽度表：xterm.js 默认是 Unicode 6（2010）的字符宽度，
-  // Tabby 和 VS Code 都加载这个 addon 让 CJK / emoji 宽度跟现代终端
-  // (Windows Terminal / ConPTY) 对齐，避免光标错位。
-  try {
-    const u11 = new Unicode11Addon();
-    terminal.loadAddon(u11);
-    terminal.unicode.activeVersion = "11";
-  } catch (e) {
-    console.warn("[Terminal] unicode-11 addon failed:", e);
-  }
 
   const tabInfo: TabInfo = {
     id: tabId,
@@ -207,7 +170,6 @@ export function createTerminalTab(
   try {
     const spawnOpts: Record<string, unknown> = { cols: terminal.cols, rows: terminal.rows };
     if (options?.cwd) spawnOpts.cwd = options.cwd;
-    if (options?.env && Object.keys(options.env).length > 0) spawnOpts.env = options.env;
     const cmdBin = options?.command?.bin || options?.shell || "zsh";
     const cmdArgs = options?.command?.args || [];
     if (options?.command) {
@@ -217,9 +179,7 @@ export function createTerminalTab(
     }
 
     const ptyInit: Promise<number> = (pty as any)._init as Promise<number>;
-    console.log(
-      `[Terminal] tab ${tabId} spawning ${cmdBin} ${cmdArgs.join(" ")} cwd=${options?.cwd} envKeys=[${Object.keys(options?.env ?? {}).join(",")}]`
-    );
+    console.log(`[Terminal] tab ${tabId} spawning ${cmdBin} ${cmdArgs.join(" ")} cwd=${options?.cwd}`);
     ptyInit
       .then((pid: number) => {
         console.log(`[Terminal] tab ${tabId} pid=${pid} ok`);
@@ -233,58 +193,13 @@ export function createTerminalTab(
 
     tabInfo.pty = pty;
 
-    // 数据通路按平台分叉，避免影响 macOS。
-    //
-    // Windows: 全套抄 Tabby ——
-    //   1. 立刻 ack 给 Rust 后端（pty.ackData 模式，对应 Tabby session.ts:130）
-    //   2. PTYDataQueue 合并零散 chunk 成 ≤100KB 的大块，UTF-8 安全切分
-    //   3. FlowControl 限制 xterm.write 速率，防止 xterm 内部解析队列爆
-    //
-    // macOS / Linux: 维持原来稳定的写法 —— write(data, callback)，callback
-    //   触发后再 ack。用户确认 macOS 稳定，不动。
-    const ptyRef = pty;
-    if (isWin) {
-      const flowControl = new FlowControl(terminal);
-      let queue: PTYDataQueue;
-      // 先声明再赋值，因为 emit 回调里要引用 queue（自己 ack 自己）。
-      // queue 的 emit 把合并后的大块塞给 flowControl；
-      // 立刻 ack 是为了让 queue 的内部 delta 不会卡死（真正的限流由 flowControl 做）。
-      queue = new PTYDataQueue(
-        (combined) => {
-          if (tabInfo.active) {
-            flowControl.write(combined);
-          } else {
-            tabInfo.dataBuffer.push(combined);
-          }
-          queue.ack(combined.byteLength);
-        },
-        () => {},
-        () => {},
-      );
-
-      pty.onData((data: Uint8Array) => {
-        try { ptyRef.ack(data.byteLength); } catch (_) {}
-        queue.push(data);
-      });
-
-      // 退出时清理 FlowControl 的等待 promise + queue 的 timer
-      pty.onExit(() => {
-        try { flowControl.dispose(); } catch (_) {}
-        try { queue.dispose(); } catch (_) {}
-      });
-    } else {
-      pty.onData((data: Uint8Array) => {
-        const size = data.byteLength;
-        if (tabInfo.active) {
-          terminal.write(data, () => {
-            try { ptyRef.ack(size); } catch (_) {}
-          });
-        } else {
-          tabInfo.dataBuffer.push(data.slice());
-          try { ptyRef.ack(size); } catch (_) {}
-        }
-      });
-    }
+    pty.onData((data: Uint8Array) => {
+      if (tabInfo.active) {
+        terminal.write(data);
+      } else {
+        tabInfo.dataBuffer.push(data.slice());
+      }
+    });
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
         onPtyWrite(tabId, "\x1b[13;2u");
@@ -309,30 +224,10 @@ export function createTerminalTab(
   const wrapper = document.createElement("div");
   wrapper.className = "terminal-wrapper";
   wrapper.dataset.tabId = tabId;
-  // 关键：先挂到 DOM 并保持可见，再调 terminal.open()。
-  // Tabby / VS Code / 裸调试终端都是这个顺序。在 visibility:hidden +
-  // detached 的元素上 open()，xterm 内部测不到字体度量和容器尺寸，
-  // 渲染状态会坏掉（光标错位、画面错乱）。
-  // 后续 TabManager.activateTab 会按需把非活动 tab 改成 visibility:hidden。
-  wrapper.style.cssText = "pointer-events:none;";
-  terminalContainer.appendChild(wrapper);
+  wrapper.style.cssText = "visibility:hidden;pointer-events:none;";
   terminal.open(wrapper);
+  terminalContainer.appendChild(wrapper);
   tabInfo.containerEl = wrapper;
-
-  // 渲染器：Windows 上启用 Canvas（比 DOM 快 10~30x）。
-  // 必须在 terminal.open() 之后、wrapper 已挂 DOM 且可见时加载，
-  // 否则 canvas 拿不到字体度量。Tabby 的策略：能 WebGL 就 WebGL，
-  // 不行就 Canvas，从来不用 DOM。我们暂时只用 Canvas（WebGL 之前出过
-  // 事，先稳为主）。macOS 走默认 DOM，用户确认稳定，不动。
-  if (isWin) {
-    try {
-      const canvas = new CanvasAddon();
-      terminal.loadAddon(canvas);
-      console.log(`[Terminal] tab ${tabId} canvas renderer enabled`);
-    } catch (e) {
-      console.warn(`[Terminal] tab ${tabId} canvas renderer failed, falling back to DOM:`, e);
-    }
-  }
 
   tabInfo.resizeObserver = new ResizeObserver(() => {
     scheduleTerminalRefit(tabInfo);

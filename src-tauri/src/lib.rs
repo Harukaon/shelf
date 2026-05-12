@@ -27,7 +27,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             pty_plugin::pty_spawn,
             pty_plugin::pty_write,
-            pty_plugin::pty_ack,
+            pty_plugin::pty_read,
             pty_plugin::pty_resize,
             pty_plugin::pty_kill,
             pty_plugin::pty_exitstatus,
