@@ -1,5 +1,6 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { spawn, IPty } from "./pty";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
@@ -159,6 +160,10 @@ export function createTerminalTab(
   },
 ): TabInfo {
   const fontOptions = terminalFontOptions();
+  const isWin = isWindows();
+  // 抄 Tabby 的写法：Windows 上把 windowsPty 选项告诉 xterm.js，让它启用
+  // ConPTY 专属补偿（cls 后视口对齐、resize 后光标位置修正等）。Tabby 跟
+  // VS Code 都在用这个。macOS 路径完全不传 windowsPty，行为不变。
   const terminal = new Terminal({
     cursorBlink: true,
     fontSize: 13,
@@ -166,9 +171,20 @@ export function createTerminalTab(
     drawBoldTextInBrightColors: false,
     theme: TERMINAL_THEME,
     allowProposedApi: true,
+    ...(isWin ? { windowsPty: { backend: "conpty" as const } } : {}),
   });
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
+  // Unicode 11 宽度表：xterm.js 默认是 Unicode 6（2010）的字符宽度，
+  // Tabby 和 VS Code 都加载这个 addon 让 CJK / emoji 宽度跟现代终端
+  // (Windows Terminal / ConPTY) 对齐，避免光标错位。
+  try {
+    const u11 = new Unicode11Addon();
+    terminal.loadAddon(u11);
+    terminal.unicode.activeVersion = "11";
+  } catch (e) {
+    console.warn("[Terminal] unicode-11 addon failed:", e);
+  }
 
   const tabInfo: TabInfo = {
     id: tabId,
@@ -221,8 +237,7 @@ export function createTerminalTab(
     // macOS / Linux: 维持原来稳定的写法 —— write(data, callback)，callback
     //   触发后再 ack。这是用户确认 macOS 稳定的实现。
     const ptyRef = pty;
-    const isWinPlatform = isWindows();
-    if (isWinPlatform) {
+    if (isWin) {
       pty.onData((data: Uint8Array) => {
         if (tabInfo.active) {
           terminal.write(data);
@@ -268,9 +283,14 @@ export function createTerminalTab(
   const wrapper = document.createElement("div");
   wrapper.className = "terminal-wrapper";
   wrapper.dataset.tabId = tabId;
-  wrapper.style.cssText = "visibility:hidden;pointer-events:none;";
-  terminal.open(wrapper);
+  // 关键：先挂到 DOM 并保持可见，再调 terminal.open()。
+  // Tabby / VS Code / 裸调试终端都是这个顺序。在 visibility:hidden +
+  // detached 的元素上 open()，xterm 内部测不到字体度量和容器尺寸，
+  // 渲染状态会坏掉（光标错位、画面错乱）。
+  // 后续 TabManager.activateTab 会按需把非活动 tab 改成 visibility:hidden。
+  wrapper.style.cssText = "pointer-events:none;";
   terminalContainer.appendChild(wrapper);
+  terminal.open(wrapper);
   tabInfo.containerEl = wrapper;
 
   // WebGL renderer: 裸调试终端不加载 WebGL 也能在 Windows 上稳跑。
