@@ -18,7 +18,7 @@ use tauri::{
 
 const HIGH_WATERMARK: usize = 100_000;
 const LOW_WATERMARK: usize = 5_000;
-const READ_BUF_SIZE: usize = 8192;
+const READ_BUF_SIZE: usize = 64 * 1024;
 const CARRY_FLUSH_LIMIT: usize = 65_536;
 
 #[derive(Default)]

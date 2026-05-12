@@ -5,12 +5,260 @@ import { spawn, IPty } from "./pty";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
 
+// =============================================================================
+// Write-coalescing + DEC mode 2026 (synchronized output) pipeline.
+//
+// Claude Code (and any TUI built on diff renderers) emits
+//   ESC [ ? 2026 h    BSU - begin synchronized update
+//   ...               an entire frame worth of bytes
+//   ESC [ ? 2026 l    ESU - end synchronized update
+// telling capable terminals "buffer these and render atomically so the user
+// doesn't see intermediate states". xterm.js 5.x does not parse this natively
+// (added in 6.x); we implement it here. Without it, xterm parses and renders
+// every chunk as it arrives, which on Windows + classic-mode Claude looks like
+// the screen flashing / scrolling on every keystroke.
+//
+// Outside of BSU/ESU sequences we still coalesce writes via setTimeout + rAF
+// (16ms quiet, 120ms max wait, one xterm.write per animation frame). Frequent
+// small chunks are common from PTYs, and one write-per-chunk causes xterm to
+// schedule a render per chunk.
+// =============================================================================
+
+const TERMINAL_WRITE_QUIET_MS = 16;
+const TERMINAL_WRITE_MAX_WAIT_MS = 120;
+const TERMINAL_DEBUG_MODE = localStorage.getItem("shelf:terminal-debug") || "0";
+const TERMINAL_DEBUG = TERMINAL_DEBUG_MODE !== "0";
+const TERMINAL_VERBOSE_DEBUG = TERMINAL_DEBUG_MODE === "1" || TERMINAL_DEBUG_MODE === "verbose";
+const SYNC_UPDATE_START_BYTES = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x68]);
+const SYNC_UPDATE_END_BYTES = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x32, 0x36, 0x6c]);
+
+function ackTab(tab: TabInfo, bytes: number) {
+  if (bytes <= 0 || !tab.pty) return;
+  try {
+    tab.pty.ack(bytes);
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 export function flushTabBuffer(tab: TabInfo) {
   if (tab.dataBuffer.length === 0) return;
+  if (TERMINAL_VERBOSE_DEBUG) {
+    console.log("[TerminalDebug] flush hidden buffer", {
+      tabId: tab.id,
+      chunks: tab.dataBuffer.length,
+      bytes: tab.dataBuffer.reduce((sum, chunk) => sum + chunk.length, 0),
+    });
+  }
+  if (tab.writeTimer) {
+    clearTimeout(tab.writeTimer);
+    tab.writeTimer = undefined;
+  }
+  if (tab.writeFrame) {
+    cancelAnimationFrame(tab.writeFrame);
+    tab.writeFrame = undefined;
+  }
   const chunks = tab.dataBuffer.splice(0);
+  let total = 0;
   for (const chunk of chunks) {
     tab.terminal.write(chunk);
+    total += chunk.length;
   }
+  tab.writeStartedAt = undefined;
+  if (total > 0) ackTab(tab, total);
+}
+
+function writeTerminalData(tab: TabInfo, data: Uint8Array) {
+  const segments = splitSyncUpdateSequences(tab, ensureUint8Array(data));
+  for (const segment of segments) {
+    if (segment.type === "start") {
+      tab.syncUpdateMode = true;
+      if (TERMINAL_DEBUG) {
+        console.log("[TerminalDebug] sync update start", { tabId: tab.id });
+      }
+      continue;
+    }
+    if (segment.type === "end") {
+      if (TERMINAL_DEBUG) {
+        console.log("[TerminalDebug] sync update end", {
+          tabId: tab.id,
+          bufferedChunks: tab.syncUpdateBuffer?.length || 0,
+          bufferedBytes: (tab.syncUpdateBuffer || []).reduce((sum, chunk) => sum + chunk.length, 0),
+        });
+      }
+      tab.syncUpdateMode = false;
+      const buffered = tab.syncUpdateBuffer?.splice(0) || [];
+      if (buffered.length > 0) {
+        queueTerminalChunk(tab, concatUint8Arrays(buffered));
+        if (tab.writeTimer) {
+          clearTimeout(tab.writeTimer);
+          tab.writeTimer = undefined;
+        }
+        flushTerminalWrite(tab);
+      }
+      continue;
+    }
+    if (segment.data.length === 0) continue;
+    if (tab.syncUpdateMode) {
+      if (!tab.syncUpdateBuffer) tab.syncUpdateBuffer = [];
+      tab.syncUpdateBuffer.push(segment.data);
+      if (TERMINAL_VERBOSE_DEBUG) {
+        console.log("[TerminalDebug] sync update buffer", {
+          tabId: tab.id,
+          bytes: segment.data.length,
+          bufferedChunks: tab.syncUpdateBuffer.length,
+          bufferedBytes: tab.syncUpdateBuffer.reduce((sum, chunk) => sum + chunk.length, 0),
+        });
+      }
+      continue;
+    }
+    queueTerminalChunk(tab, segment.data);
+  }
+}
+
+function queueTerminalChunk(tab: TabInfo, data: Uint8Array) {
+  tab.dataBuffer.push(data.slice());
+  if (!tab.writeStartedAt) tab.writeStartedAt = performance.now();
+  if (TERMINAL_VERBOSE_DEBUG) {
+    console.log("[TerminalDebug] pty chunk", {
+      tabId: tab.id,
+      bytes: data.length,
+      bufferedChunks: tab.dataBuffer.length,
+      bufferedBytes: tab.dataBuffer.reduce((sum, chunk) => sum + chunk.length, 0),
+      sinceInputMs: tab.lastUserInputAt ? Math.round(performance.now() - tab.lastUserInputAt) : null,
+      ansiHints: scanAnsiHints(data),
+      syncUpdateMode: !!tab.syncUpdateMode,
+    });
+  }
+  scheduleTerminalWrite(tab);
+}
+
+function ensureUint8Array(data: Uint8Array | number[] | ArrayBuffer) {
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  return Uint8Array.from(data);
+}
+
+function concatUint8Arrays(chunks: Uint8Array[]) {
+  if (chunks.length === 0) return new Uint8Array();
+  if (chunks.length === 1) return chunks[0].slice();
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+function matchesSequence(data: Uint8Array, offset: number, sequence: Uint8Array) {
+  if (offset + sequence.length > data.length) return false;
+  for (let i = 0; i < sequence.length; i++) {
+    if (data[offset + i] !== sequence[i]) return false;
+  }
+  return true;
+}
+
+function findSyncSequenceRemainderLength(data: Uint8Array) {
+  // Returns how many trailing bytes of `data` could be the prefix of a
+  // BSU/ESU sequence (so we hold them until the next chunk arrives, in case
+  // the 8-byte sequence got split across a Channel chunk boundary).
+  const maxLength = Math.min(SYNC_UPDATE_START_BYTES.length - 1, data.length);
+  for (let len = maxLength; len > 0; len--) {
+    let startMatch = true;
+    let endMatch = true;
+    for (let i = 0; i < len; i++) {
+      const value = data[data.length - len + i];
+      if (value !== SYNC_UPDATE_START_BYTES[i]) startMatch = false;
+      if (value !== SYNC_UPDATE_END_BYTES[i]) endMatch = false;
+      if (!startMatch && !endMatch) break;
+    }
+    if (startMatch || endMatch) return len;
+  }
+  return 0;
+}
+
+function splitSyncUpdateSequences(tab: TabInfo, data: Uint8Array) {
+  const text = tab.syncSequenceRemainder
+    ? concatUint8Arrays([tab.syncSequenceRemainder, data])
+    : data;
+  const segments: Array<{ type: "data" | "start" | "end"; data: Uint8Array }> = [];
+  let cursor = 0;
+  let offset = 0;
+  while (offset < text.length) {
+    let nextType: "start" | "end" | null = null;
+    let nextLength = 0;
+    if (matchesSequence(text, offset, SYNC_UPDATE_START_BYTES)) {
+      nextType = "start";
+      nextLength = SYNC_UPDATE_START_BYTES.length;
+    } else if (matchesSequence(text, offset, SYNC_UPDATE_END_BYTES)) {
+      nextType = "end";
+      nextLength = SYNC_UPDATE_END_BYTES.length;
+    }
+    if (!nextType) {
+      offset++;
+      continue;
+    }
+    if (offset > cursor) {
+      segments.push({ type: "data", data: text.slice(cursor, offset) });
+    }
+    segments.push({ type: nextType, data: new Uint8Array() });
+    offset += nextLength;
+    cursor = offset;
+  }
+  let remainder = text.subarray(cursor);
+  const remainderLength = findSyncSequenceRemainderLength(remainder);
+  if (remainderLength > 0) {
+    tab.syncSequenceRemainder = remainder.slice(remainder.length - remainderLength);
+    remainder = remainder.slice(0, remainder.length - remainderLength);
+  } else {
+    tab.syncSequenceRemainder = undefined;
+  }
+  if (remainder.length > 0) {
+    segments.push({ type: "data", data: remainder.slice() });
+  }
+  return segments;
+}
+
+function scheduleTerminalWrite(tab: TabInfo) {
+  if (tab.writeTimer) clearTimeout(tab.writeTimer);
+  const elapsed = tab.writeStartedAt ? performance.now() - tab.writeStartedAt : 0;
+  const delay = elapsed >= TERMINAL_WRITE_MAX_WAIT_MS ? 0 : TERMINAL_WRITE_QUIET_MS;
+  tab.writeTimer = setTimeout(() => {
+    tab.writeTimer = undefined;
+    flushTerminalWrite(tab);
+  }, delay);
+}
+
+function flushTerminalWrite(tab: TabInfo) {
+  if (tab.writeFrame || tab.dataBuffer.length === 0) return;
+  tab.writeFrame = requestAnimationFrame(() => {
+    tab.writeFrame = undefined;
+    if (!tab.terminal || !tab.active) return;
+    const chunks = tab.dataBuffer.splice(0);
+    tab.writeStartedAt = undefined;
+    const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    if (bytes === 0) return;
+    const combined = new Uint8Array(bytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    if (TERMINAL_VERBOSE_DEBUG) {
+      console.log("[TerminalDebug] write flush", {
+        tabId: tab.id,
+        chunks: chunks.length,
+        bytes,
+        sinceInputMs: tab.lastUserInputAt ? Math.round(performance.now() - tab.lastUserInputAt) : null,
+      });
+    }
+    // Ack the bytes back to the backend only AFTER xterm has parsed them.
+    // This is what gates the Rust reader's PAUSE/RESUME — the backend will
+    // not flood us with data faster than we can actually consume.
+    tab.terminal.write(combined, () => ackTab(tab, bytes));
+  });
 }
 
 function terminalFontOptions() {
@@ -36,6 +284,36 @@ function terminalFontOptions() {
   };
 }
 
+function terminalPlatformOptions() {
+  const platform = navigator.platform.toLowerCase();
+  if (platform.includes("win")) {
+    return {
+      windowsPty: {
+        backend: "conpty" as const,
+        buildNumber: 19045,
+      },
+    };
+  }
+  return {};
+}
+
+function scanAnsiHints(data: Uint8Array) {
+  if (!TERMINAL_VERBOSE_DEBUG) return null;
+  let text = "";
+  try {
+    text = new TextDecoder().decode(data);
+  } catch (_) {
+    return null;
+  }
+  return {
+    clearScreen: text.includes("\x1b[2J") || text.includes("\x1b[J"),
+    clearScrollback: text.includes("\x1b[3J"),
+    homeCursor: text.includes("\x1b[H") || text.includes("\x1b[f"),
+    altEnter: text.includes("\x1b[?1049h") || text.includes("\x1b[?47h"),
+    altLeave: text.includes("\x1b[?1049l") || text.includes("\x1b[?47l"),
+  };
+}
+
 function terminalPixelSize(tab: TabInfo) {
   const dimensions = (tab.terminal as any)?._core?._renderService?.dimensions?.css?.canvas;
   if (dimensions?.width > 0 && dimensions?.height > 0) {
@@ -53,34 +331,53 @@ function terminalPixelSize(tab: TabInfo) {
   };
 }
 
-function isWindows(): boolean {
-  return navigator.platform.toLowerCase().includes("win");
-}
-
 function schedulePtyResize(tab: TabInfo, cols = tab.terminal.cols, rows = tab.terminal.rows) {
   if (!tab.pty || !tab.terminal || cols <= 0 || rows <= 0) return;
   if (tab.ptyResizeTimer) clearTimeout(tab.ptyResizeTimer);
-  // Windows: ConPTY redraws the whole viewport on each resize, so we use a
-  // slightly longer debounce to coalesce drag events and reduce flicker.
-  // macOS / Linux: PTY resize is cheap, keep the original 100ms.
-  const debounce = isWindows() ? 150 : 100;
   tab.ptyResizeTimer = setTimeout(() => {
     tab.ptyResizeTimer = undefined;
     if (!tab.pty || !tab.terminal) return;
     const pixels = terminalPixelSize(tab);
     const c = Math.max(1, cols);
     const r = Math.max(1, rows);
-    console.log(`[Terminal] tab ${tab.id} pty_resize cols=${c} rows=${r} px=${pixels.width}x${pixels.height}`);
     tab.pty.resize(c, r, pixels.width, pixels.height);
-  }, debounce);
+  }, 100);
 }
 
 export function refitTerminal(tab: TabInfo) {
   if (!tab.fitAddon || !tab.terminal || !tab.pty || tab.containerEl.style.visibility === "hidden") return;
   const bounds = tab.containerEl.getBoundingClientRect();
-  if (bounds.width <= 0 || bounds.height <= 0) return;
+  const width = Math.round(bounds.width);
+  const height = Math.round(bounds.height);
+  if (width <= 0 || height <= 0) return;
+  const dimensions = tab.fitAddon.proposeDimensions();
+  if (!dimensions || isNaN(dimensions.cols) || isNaN(dimensions.rows)) return;
+  // Skip no-op refits: if neither pixel size nor proposed cell grid changed,
+  // we'd just be sending the same resize again, which on Windows triggers a
+  // ConPTY full-viewport redraw for nothing.
+  if (
+    tab.lastFitWidth === width &&
+    tab.lastFitHeight === height &&
+    tab.terminal.cols === dimensions.cols &&
+    tab.terminal.rows === dimensions.rows
+  ) {
+    return;
+  }
+  if (TERMINAL_VERBOSE_DEBUG) {
+    console.log("[TerminalDebug] refit", {
+      tabId: tab.id,
+      width,
+      height,
+      prevWidth: tab.lastFitWidth ?? null,
+      prevHeight: tab.lastFitHeight ?? null,
+      cols: dimensions.cols,
+      rows: dimensions.rows,
+    });
+  }
   try {
     tab.fitAddon.fit();
+    tab.lastFitWidth = width;
+    tab.lastFitHeight = height;
     tab.terminal.refresh(0, Math.max(0, tab.terminal.rows - 1));
   } catch (_) {
     /* ignore */
@@ -89,6 +386,9 @@ export function refitTerminal(tab: TabInfo) {
 
 export function scheduleTerminalRefit(tab: TabInfo, delay = 80) {
   if (!tab.terminal || tab.containerEl.style.visibility === "hidden") return;
+  if (TERMINAL_VERBOSE_DEBUG) {
+    console.log("[TerminalDebug] schedule refit", { tabId: tab.id, delay });
+  }
 
   if (!tab.resizeFrame) {
     tab.resizeFrame = requestAnimationFrame(() => {
@@ -110,6 +410,9 @@ export function scheduleTerminalRefit(tab: TabInfo, delay = 80) {
 
 export function repaintTerminal(tab: TabInfo) {
   if (!tab.terminal || tab.containerEl.style.visibility === "hidden") return;
+  if (TERMINAL_VERBOSE_DEBUG) {
+    console.log("[TerminalDebug] repaint", { tabId: tab.id });
+  }
   if (tab.resizeFrame) cancelAnimationFrame(tab.resizeFrame);
   tab.resizeFrame = requestAnimationFrame(() => {
     tab.resizeFrame = undefined;
@@ -145,6 +448,10 @@ const TERMINAL_THEME = {
   brightWhite: "#f1f3f5",
 };
 
+function isWindows(): boolean {
+  return navigator.platform.toLowerCase().includes("win");
+}
+
 function tryEnableWebgl(tabId: string, terminal: Terminal): WebglAddon | null {
   try {
     const addon = new WebglAddon();
@@ -176,10 +483,14 @@ export function createTerminalTab(
   },
 ): TabInfo {
   const fontOptions = terminalFontOptions();
+  const platformOptions = terminalPlatformOptions();
+  const cmdBin = options?.command?.bin || options?.shell || "zsh";
+  const cmdArgs = options?.command?.args || [];
   const terminal = new Terminal({
     cursorBlink: true,
     fontSize: 13,
     ...fontOptions,
+    ...platformOptions,
     drawBoldTextInBrightColors: false,
     theme: TERMINAL_THEME,
     allowProposedApi: true,
@@ -206,8 +517,6 @@ export function createTerminalTab(
     const spawnOpts: Record<string, unknown> = { cols: terminal.cols, rows: terminal.rows };
     if (options?.cwd) spawnOpts.cwd = options.cwd;
     if (options?.env && Object.keys(options.env).length > 0) spawnOpts.env = options.env;
-    const cmdBin = options?.command?.bin || options?.shell || "zsh";
-    const cmdArgs = options?.command?.args || [];
     if (options?.command) {
       pty = spawn(cmdBin, cmdArgs, spawnOpts);
     } else {
@@ -218,6 +527,15 @@ export function createTerminalTab(
     console.log(
       `[Terminal] tab ${tabId} spawning ${cmdBin} ${cmdArgs.join(" ")} cwd=${options?.cwd} envKeys=[${Object.keys(options?.env ?? {}).join(",")}]`
     );
+    if (TERMINAL_DEBUG) {
+      console.log("[TerminalDebug] create", {
+        tabId,
+        command: cmdBin,
+        args: cmdArgs,
+        scrollback: terminal.options.scrollback,
+        windowsPty: (terminal.options as any).windowsPty || null,
+      });
+    }
     ptyInit
       .then((pid: number) => {
         console.log(`[Terminal] tab ${tabId} pid=${pid} ok`);
@@ -231,26 +549,33 @@ export function createTerminalTab(
 
     tabInfo.pty = pty;
 
-    // Flow-controlled data path: terminal.write returns when xterm has parsed
-    // the chunk; in its callback we ack the bytes back to Rust so the backend
-    // can resume reading from PTY if it was paused at the high watermark.
-    const ptyRef = pty;
     pty.onData((data: Uint8Array) => {
-      const size = data.byteLength;
       if (tabInfo.active) {
-        terminal.write(data, () => {
-          try { ptyRef.ack(size); } catch (_) {}
-        });
+        writeTerminalData(tabInfo, data);
       } else {
-        // Inactive tab: buffer in memory. Ack immediately so backend keeps
-        // flowing (matches Tabby/VS Code behavior — inactive tabs do not
-        // backpressure the source).
+        // Inactive tab: hold in dataBuffer; ack immediately so the backend
+        // keeps flowing (matches Tabby / VS Code behavior — inactive tabs
+        // never apply backpressure to the source). When the tab is later
+        // activated, flushTabBuffer drains directly to terminal.write.
         tabInfo.dataBuffer.push(data.slice());
-        try { ptyRef.ack(size); } catch (_) {}
+        ackTab(tabInfo, data.byteLength);
       }
     });
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-      if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
+      // Shift+Enter sends a CSI-u sequence that Claude Code interprets as a
+      // "soft newline" inside its input box (vs Enter which submits). The
+      // !event.isComposing guard prevents firing during IME composition,
+      // which on Windows otherwise eats the Shift-Enter that the IME UI uses
+      // to confirm candidates.
+      if (
+        event.type === "keydown" &&
+        event.key === "Enter" &&
+        event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.isComposing
+      ) {
         onPtyWrite(tabId, "\x1b[13;2u");
         event.preventDefault();
         return false;
@@ -258,8 +583,39 @@ export function createTerminalTab(
       return true;
     });
     terminal.onData((data: string) => {
+      tabInfo.lastUserInputAt = performance.now();
+      if (TERMINAL_VERBOSE_DEBUG) {
+        console.log("[TerminalDebug] input", {
+          tabId,
+          length: data.length,
+          preview: JSON.stringify(data).slice(0, 120),
+        });
+      }
       onPtyWrite(tabId, data);
     });
+    if (TERMINAL_VERBOSE_DEBUG) {
+      terminal.onWriteParsed(() => {
+        const activeBuffer = (terminal as any).buffer?.active;
+        console.log("[TerminalDebug] parsed", {
+          tabId,
+          cursorY: activeBuffer?.cursorY ?? null,
+          viewportY: activeBuffer?.viewportY ?? null,
+          baseY: activeBuffer?.baseY ?? null,
+          length: activeBuffer?.length ?? null,
+        });
+      });
+      terminal.onScroll((position: number) => {
+        console.log("[TerminalDebug] scroll", { tabId, position });
+      });
+      terminal.onRender((range) => {
+        console.log("[TerminalDebug] render", {
+          tabId,
+          start: range.start,
+          end: range.end,
+          sinceInputMs: tabInfo.lastUserInputAt ? Math.round(performance.now() - tabInfo.lastUserInputAt) : null,
+        });
+      });
+    }
     pty.onExit((exit) => {
       console.log(`[Terminal] pty exited tab ${tabId} pid=${pty?.pid} code=`, exit.exitCode, "signal:", exit.signal);
       terminal.write(`\r\n${t("process.exited")}\r\n`);
@@ -278,22 +634,34 @@ export function createTerminalTab(
   terminalContainer.appendChild(wrapper);
   tabInfo.containerEl = wrapper;
 
-  // WebGL addon: only on Windows where the default DOM renderer is the
-  // dominant CPU/flicker bottleneck. macOS works fine with the default
-  // renderer, so we don't touch it (keep what's stable stable).
+  // WebGL renderer on Windows only — the default DOM renderer is the dominant
+  // CPU bottleneck there. macOS works fine with the default renderer.
   if (isWindows()) {
     tryEnableWebgl(tabId, terminal);
-  } else {
-    console.log(`[Terminal] tab ${tabId} non-Windows platform, keeping default renderer`);
   }
 
   tabInfo.resizeObserver = new ResizeObserver(() => {
+    if (TERMINAL_VERBOSE_DEBUG) {
+      const bounds = wrapper.getBoundingClientRect();
+      console.log("[TerminalDebug] resize observer", {
+        tabId,
+        width: Math.round(bounds.width),
+        height: Math.round(bounds.height),
+      });
+    }
     scheduleTerminalRefit(tabInfo);
   });
   tabInfo.resizeObserver.observe(wrapper);
 
   terminal.onResize(() => {
     try {
+      if (TERMINAL_VERBOSE_DEBUG) {
+        console.log("[TerminalDebug] terminal resize", {
+          tabId,
+          cols: terminal.cols,
+          rows: terminal.rows,
+        });
+      }
       schedulePtyResize(tabInfo);
     } catch (_) {
       /* ignore */
