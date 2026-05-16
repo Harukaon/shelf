@@ -1,4 +1,4 @@
-use crate::session::{ShelfConfig, Workspace};
+use crate::session::{SessionProvider, ShelfConfig, Workspace};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -13,6 +13,13 @@ fn config_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".shelf")
         .join("config.json")
+}
+
+fn app_state_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".shelf")
+        .join("state.json")
 }
 
 fn default_shell() -> String {
@@ -58,7 +65,8 @@ fn save_config(config: &ShelfConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn add_workspace(path: String) -> Result<Workspace, String> {
+pub fn add_workspace(path: String, provider: Option<SessionProvider>) -> Result<Workspace, String> {
+    let provider = provider.unwrap_or_default();
     let name = std::path::Path::new(&path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -67,11 +75,16 @@ pub fn add_workspace(path: String) -> Result<Workspace, String> {
     let workspace = Workspace {
         name: name.clone(),
         path: path.clone(),
+        provider,
     };
 
     let mut config = load_config();
 
-    if config.workspaces.iter().any(|w| w.path == path) {
+    if config
+        .workspaces
+        .iter()
+        .any(|w| w.path == path && w.provider == provider)
+    {
         return Err("Workspace already exists".to_string());
     }
 
@@ -82,9 +95,12 @@ pub fn add_workspace(path: String) -> Result<Workspace, String> {
 }
 
 #[tauri::command]
-pub fn remove_workspace(path: String) -> Result<(), String> {
+pub fn remove_workspace(path: String, provider: Option<SessionProvider>) -> Result<(), String> {
+    let provider = provider.unwrap_or_default();
     let mut config = load_config();
-    config.workspaces.retain(|w| w.path != path);
+    config
+        .workspaces
+        .retain(|w| !(w.path == path && w.provider == provider));
     save_config(&config)?;
     Ok(())
 }
@@ -99,6 +115,7 @@ pub fn list_workspaces() -> Result<Vec<serde_json::Value>, String> {
             serde_json::json!({
                 "name": w.name,
                 "path": w.path,
+                "provider": w.provider,
                 "session_count": 0,
             })
         })
@@ -199,6 +216,27 @@ pub fn get_pinned() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+pub fn get_app_state() -> Result<serde_json::Value, String> {
+    let path = app_state_path();
+    if !path.exists() {
+        return Ok(serde_json::json!({}));
+    }
+    let content = fs::read_to_string(&path).map_err(|e| format!("Read app state: {}", e))?;
+    serde_json::from_str(&content).map_err(|e| format!("Parse app state: {}", e))
+}
+
+#[tauri::command]
+pub fn save_app_state(state: serde_json::Value) -> Result<(), String> {
+    let path = app_state_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Create app state dir: {}", e))?;
+    }
+    let content =
+        serde_json::to_string_pretty(&state).map_err(|e| format!("Serialize app state: {}", e))?;
+    fs::write(&path, content).map_err(|e| format!("Write app state: {}", e))
+}
+
+#[tauri::command]
 pub fn exit_app() {
     std::process::exit(0);
 }
@@ -230,6 +268,66 @@ pub fn find_claude() -> Result<String, String> {
     Err("claude not found".to_string())
 }
 
+#[tauri::command]
+pub fn find_codex() -> Result<String, String> {
+    for path in codex_candidates() {
+        if is_executable_file(&path) {
+            return Ok(path.to_string_lossy().to_string());
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(path) = find_command_with_shell("powershell", "codex") {
+            return Ok(path);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        for shell in ["/bin/zsh", "/bin/bash", "/bin/sh"] {
+            if let Some(path) = find_command_with_shell(shell, "codex") {
+                return Ok(path);
+            }
+        }
+    }
+
+    Err("codex not found".to_string())
+}
+
+fn codex_candidates() -> Vec<PathBuf> {
+    let mut candidates = vec![];
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        candidates.extend([
+            PathBuf::from("/opt/homebrew/bin/codex"),
+            PathBuf::from("/usr/local/bin/codex"),
+            PathBuf::from("/usr/bin/codex"),
+        ]);
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        candidates.extend([
+            home.join(".local/bin/codex"),
+            home.join("bin/codex"),
+            home.join(".volta/bin/codex"),
+            home.join(".asdf/shims/codex"),
+            home.join(".bun/bin/codex"),
+            home.join(".npm-global/bin/codex"),
+        ]);
+        candidates.extend(find_versioned_bin_named(
+            &home.join(".nvm/versions/node"),
+            "codex",
+        ));
+        candidates.extend(find_versioned_bin_named(
+            &home.join(".fnm/node-versions"),
+            "codex",
+        ));
+    }
+
+    candidates
+}
 fn claude_candidates() -> Vec<PathBuf> {
     let mut candidates = vec![];
 
@@ -282,12 +380,16 @@ fn find_fnm_claude_bins(home: &Path) -> Vec<PathBuf> {
     let mut candidates = find_versioned_bin_candidates(&home.join(".fnm/node-versions"));
 
     #[cfg(target_os = "macos")]
-    candidates.extend(find_versioned_bin_candidates(&home.join("Library/Application Support/fnm/node-versions")));
+    candidates.extend(find_versioned_bin_candidates(
+        &home.join("Library/Application Support/fnm/node-versions"),
+    ));
 
     #[cfg(target_os = "windows")]
     {
         if let Some(local) = dirs::data_local_dir() {
-            candidates.extend(find_versioned_bin_candidates(&local.join("fnm/node-versions")));
+            candidates.extend(find_versioned_bin_candidates(
+                &local.join("fnm/node-versions"),
+            ));
         }
     }
 
@@ -314,9 +416,24 @@ fn find_versioned_bin_candidates(root: &Path) -> Vec<PathBuf> {
     candidates
 }
 
+fn find_versioned_bin_named(root: &Path, bin_name: &str) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let Ok(entries) = fs::read_dir(root) else {
+        return candidates;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        candidates.push(path.join("bin").join(bin_name));
+        candidates.extend(find_versioned_bin_named(&path, bin_name));
+    }
+
+    candidates
+}
 #[cfg(target_os = "windows")]
 fn find_claude_with_shell(shell: &str) -> Option<String> {
-    let command = "Get-Command claude -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source";
+    let command =
+        "Get-Command claude -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source";
     let output = std::process::Command::new(shell)
         .args(["-NoProfile", "-Command", command])
         .creation_flags(CREATE_NO_WINDOW)
@@ -345,6 +462,58 @@ fn find_claude_with_shell(shell: &str) -> Option<String> {
     "#;
     let output = std::process::Command::new(shell)
         .args(["-l", "-c", command])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn find_command_with_shell(shell: &str, command_name: &str) -> Option<String> {
+    let command = format!(
+        "Get-Command {} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source",
+        command_name
+    );
+    let output = std::process::Command::new(shell)
+        .args(["-NoProfile", "-Command", command.as_str()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn find_command_with_shell(shell: &str, command_name: &str) -> Option<String> {
+    let command = format!(
+        r#"
+        export NVM_DIR="$HOME/.nvm"
+        [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1
+        [ -s "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" >/dev/null 2>&1
+        command -v {}
+    "#,
+        command_name,
+    );
+    let output = std::process::Command::new(shell)
+        .args(["-l", "-c", command.as_str()])
         .output()
         .ok()?;
 

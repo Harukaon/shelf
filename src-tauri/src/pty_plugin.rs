@@ -52,19 +52,11 @@ pub async fn pty_spawn<R: Runtime>(
     rows: u16,
     cwd: Option<String>,
     env: BTreeMap<String, String>,
-    encoding: Option<String>,
-    handle_flow_control: Option<bool>,
-    flow_control_pause: Option<String>,
-    flow_control_resume: Option<String>,
+    env_remove: Option<Vec<String>>,
 
     state: tauri::State<'_, PtyState>,
     _app_handle: AppHandle<R>,
 ) -> Result<u32, String> {
-    let _ = encoding;
-    let _ = handle_flow_control;
-    let _ = flow_control_pause;
-    let _ = flow_control_resume;
-
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -87,9 +79,15 @@ pub async fn pty_spawn<R: Runtime>(
     if let Some(cwd) = cwd {
         cmd.cwd(OsString::from(cwd));
     }
+    if let Some(env_remove) = env_remove {
+        for key in env_remove {
+            if !key.trim().is_empty() {
+                cmd.env_remove(OsString::from(key));
+            }
+        }
+    }
     cmd.env(OsString::from("TERM"), OsString::from(term_name));
     cmd.env(OsString::from("COLORTERM"), OsString::from("truecolor"));
-    cmd.env(OsString::from("CLICOLOR"), OsString::from("1"));
     cmd.env(OsString::from("TERM_PROGRAM"), OsString::from("Shelf"));
     for (k, v) in env.iter() {
         cmd.env(OsString::from(k), OsString::from(v));

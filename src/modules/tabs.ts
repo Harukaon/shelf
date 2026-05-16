@@ -1,5 +1,5 @@
 import { TabInfo } from "../types";
-import { flushTabBuffer, repaintTerminal } from "./terminal";
+import { repaintTerminal } from "./terminal";
 
 export class TabManager {
   private tabs = new Map<string, TabInfo>();
@@ -41,7 +41,6 @@ export class TabManager {
       tab.containerEl.style.visibility = "visible";
       tab.containerEl.style.pointerEvents = "auto";
       tab.active = true;
-      flushTabBuffer(tab);
       repaintTerminal(tab);
       if (this.onActivateTab) this.onActivateTab(tab);
     }

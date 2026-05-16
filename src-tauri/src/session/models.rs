@@ -1,5 +1,18 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionProvider {
+    Claude,
+    Codex,
+}
+
+impl Default for SessionProvider {
+    fn default() -> Self {
+        SessionProvider::Claude
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Session {
     pub id: String,
@@ -13,12 +26,15 @@ pub struct Session {
     pub updated_at: String,
     pub file_path: String,
     pub version: String,
+    pub provider: SessionProvider,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Workspace {
     pub name: String,
     pub path: String,
+    #[serde(default)]
+    pub provider: SessionProvider,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -32,8 +48,12 @@ pub struct ShelfConfig {
     pub pinned: Vec<String>,
 }
 
-fn default_shell() -> String { "zsh".to_string() }
-fn default_lang() -> String { "en".to_string() }
+fn default_shell() -> String {
+    "zsh".to_string()
+}
+fn default_lang() -> String {
+    "en".to_string()
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileEntry {

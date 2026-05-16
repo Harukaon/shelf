@@ -1,16 +1,17 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { spawn, IPty } from "./pty";
+import { spawn, IPty, IPtyForkOptions } from "./pty";
 import { TabInfo } from "../types";
 import { t } from "../i18n";
 
-export function flushTabBuffer(tab: TabInfo) {
-  if (tab.dataBuffer.length === 0) return;
-  const chunks = tab.dataBuffer.splice(0);
-  for (const chunk of chunks) {
-    tab.terminal.write(chunk);
-  }
-}
+type TerminalTabOptions = {
+  sessionId?: string;
+  sessionProvider?: "claude" | "codex";
+  cwd?: string;
+  workspacePath?: string;
+  shell?: string;
+  command?: { bin: string; args: string[] };
+};
 
 function terminalFontOptions() {
   const platform = navigator.platform.toLowerCase();
@@ -61,6 +62,19 @@ function schedulePtyResize(tab: TabInfo, cols = tab.terminal.cols, rows = tab.te
     const pixels = terminalPixelSize(tab);
     tab.pty.resize(cols, rows, pixels.width, pixels.height);
   }, 100);
+}
+
+function loginShellArgs(shell: string): string[] {
+  const shellName = shell.split("/").pop() || shell;
+  const platform = navigator.platform.toLowerCase();
+  if (platform.includes("mac") && ["zsh", "bash"].includes(shellName)) return ["-l"];
+  return [];
+}
+
+function shouldRemoveInheritedNoColor(options?: TerminalTabOptions): boolean {
+  if (!options?.command || !options.sessionProvider) return false;
+  const env = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env;
+  return env?.DEV === true;
 }
 
 export function refitTerminal(tab: TabInfo) {
@@ -138,7 +152,7 @@ export function createTerminalTab(
   title: string,
   terminalContainer: HTMLElement,
   onPtyWrite: (tabId: string, data: string) => void,
-  options?: { sessionId?: string; cwd?: string; workspacePath?: string; shell?: string; command?: { bin: string; args: string[] } },
+  options?: TerminalTabOptions,
 ): TabInfo {
   const fontOptions = terminalFontOptions();
   const terminal = new Terminal({
@@ -147,36 +161,50 @@ export function createTerminalTab(
     ...fontOptions,
     drawBoldTextInBrightColors: false,
     theme: TERMINAL_THEME,
-    allowProposedApi: true,
   });
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
 
+  const wrapper = document.createElement("div");
+  wrapper.className = "terminal-wrapper";
+  wrapper.dataset.tabId = tabId;
+  wrapper.style.cssText = "visibility:hidden;pointer-events:none;";
+  terminalContainer.appendChild(wrapper);
+  terminal.open(wrapper);
+  try {
+    fitAddon.fit();
+  } catch (_) {
+    /* keep xterm's default 80x24 */
+  }
+
   const tabInfo: TabInfo = {
     id: tabId,
     sessionId: options?.sessionId,
+    sessionProvider: options?.sessionProvider,
     workspacePath: options?.workspacePath,
+    cwd: options?.cwd,
+    shell: options?.command ? undefined : options?.shell,
+    restoreKind: options?.sessionId ? "session" : options?.command ? "new-session" : "terminal",
     title,
     closable: true,
     terminal,
     fitAddon,
     pty: undefined,
-    containerEl: null as any,
-    dataBuffer: [],
+    ptyExited: false,
+    containerEl: wrapper,
     active: false,
   };
 
   let pty: IPty | undefined;
   try {
-    const spawnOpts: Record<string, unknown> = { cols: terminal.cols, rows: terminal.rows };
+    const spawnOpts: IPtyForkOptions = { cols: terminal.cols, rows: terminal.rows };
     if (options?.cwd) spawnOpts.cwd = options.cwd;
     const cmdBin = options?.command?.bin || options?.shell || "zsh";
-    const cmdArgs = options?.command?.args || [];
-    if (options?.command) {
-      pty = spawn(cmdBin, cmdArgs, spawnOpts);
-    } else {
-      pty = spawn(cmdBin, [], spawnOpts);
+    const cmdArgs = options?.command?.args || loginShellArgs(cmdBin);
+    if (shouldRemoveInheritedNoColor(options)) {
+      spawnOpts.envRemove = ["NO_COLOR"];
     }
+    pty = spawn(cmdBin, cmdArgs, spawnOpts);
 
     const ptyInit: Promise<number> = (pty as any)._init as Promise<number>;
     console.log(`[Terminal] tab ${tabId} spawning ${cmdBin} ${cmdArgs.join(" ")} cwd=${options?.cwd}`);
@@ -185,6 +213,7 @@ export function createTerminalTab(
         console.log(`[Terminal] tab ${tabId} pid=${pid} ok`);
       })
       .catch((e: unknown) => {
+        tabInfo.ptyExited = true;
         console.error(`[Terminal] tab ${tabId} spawn FAILED:`, e);
         terminal.clear();
         terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
@@ -194,11 +223,7 @@ export function createTerminalTab(
     tabInfo.pty = pty;
 
     pty.onData((data: Uint8Array) => {
-      if (tabInfo.active) {
-        terminal.write(data);
-      } else {
-        tabInfo.dataBuffer.push(data.slice());
-      }
+      terminal.write(data);
     });
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
@@ -212,22 +237,16 @@ export function createTerminalTab(
       onPtyWrite(tabId, data);
     });
     pty.onExit((exit) => {
+      tabInfo.ptyExited = true;
       console.log(`[Terminal] pty exited tab ${tabId} pid=${pty?.pid} code=`, exit.exitCode, "signal:", exit.signal);
       terminal.write(`\r\n${t("process.exited")}\r\n`);
     });
   } catch (e) {
+    tabInfo.ptyExited = true;
     console.error("Spawn PTY:", e);
     terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
     terminal.writeln("Try closing some tabs or restarting Shelf.");
   }
-
-  const wrapper = document.createElement("div");
-  wrapper.className = "terminal-wrapper";
-  wrapper.dataset.tabId = tabId;
-  wrapper.style.cssText = "visibility:hidden;pointer-events:none;";
-  terminal.open(wrapper);
-  terminalContainer.appendChild(wrapper);
-  tabInfo.containerEl = wrapper;
 
   tabInfo.resizeObserver = new ResizeObserver(() => {
     scheduleTerminalRefit(tabInfo);
@@ -241,6 +260,7 @@ export function createTerminalTab(
       /* ignore */
     }
   });
+  schedulePtyResize(tabInfo, terminal.cols, terminal.rows);
 
   return tabInfo;
 }

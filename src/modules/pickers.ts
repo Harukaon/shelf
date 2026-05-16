@@ -1,5 +1,6 @@
 import { Session } from "../types";
 import { refreshIcons, escapeHtml, formatDate } from "../helpers";
+import { t } from "../i18n";
 
 export function showTerminalMenu(
   addBtn: HTMLElement,
@@ -17,7 +18,7 @@ export function showSessionPicker(
 
   const picker = document.createElement("div");
   picker.className = "session-picker";
-  picker.innerHTML = `<div class="picker-search"><i data-lucide="search"></i><input placeholder="Search sessions..." autofocus></div><div class="picker-list"></div>`;
+  picker.innerHTML = `<div class="picker-search"><i data-lucide="search"></i><input placeholder="${t("picker.search")}" autofocus></div><div class="picker-list"></div>`;
   document.body.appendChild(picker);
   refreshIcons();
 
@@ -30,7 +31,7 @@ export function showSessionPicker(
       session.display_title.toLowerCase().includes(filter.toLowerCase()),
     );
     if (filtered.length === 0) {
-      list.innerHTML = '<div class="picker-empty">No sessions found</div>';
+      list.innerHTML = `<div class="picker-empty">${t("picker.empty")}</div>`;
       return;
     }
     for (const { session, workspacePath } of filtered.slice(0, 20)) {

@@ -50,14 +50,14 @@ export async function renderFileTree(
     container.innerHTML = "";
   }
   if (files.length === 0 && indent === 0) {
-    container.innerHTML = '<div class="tree-empty">Empty directory</div>';
+    container.innerHTML = `<div class="tree-empty">${t("file.empty")}</div>`;
     return;
   }
 
   for (const file of files) {
     const item = document.createElement("div");
     item.className = "file-item";
-    item.style.paddingLeft = `${12 + indent * 16}px`;
+    item.style.paddingLeft = `${8 + indent * 10}px`;
     const isExpanded = expandedDirs.has(file.path);
 
     if (file.is_dir) {

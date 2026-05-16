@@ -6,12 +6,7 @@ export interface IPtyForkOptions {
   rows?: number;
   cwd?: string;
   env?: { [key: string]: string | undefined };
-  encoding?: string | null;
-  handleFlowControl?: boolean;
-  flowControlPause?: string;
-  flowControlResume?: string;
-  uid?: number;
-  gid?: number;
+  envRemove?: string[];
 }
 
 export interface IPty {
@@ -19,7 +14,6 @@ export interface IPty {
   readonly cols: number;
   readonly rows: number;
   readonly process: string;
-  handleFlowControl: boolean;
   readonly onData: (listener: (e: Uint8Array) => void) => IDisposable;
   readonly onExit: (listener: (e: { exitCode: number; signal?: number }) => void) => IDisposable;
   resize(columns: number, rows: number, pixelWidth?: number, pixelHeight?: number): void;
@@ -44,7 +38,8 @@ class Pty implements IPty {
   cols = 0;
   rows = 0;
   process = "";
-  handleFlowControl = false;
+  private pixelWidth = 0;
+  private pixelHeight = 0;
 
   private _onDataListeners: Array<(e: Uint8Array) => void> = [];
   private _onExitListeners: Array<(e: { exitCode: number; signal?: number }) => void> = [];
@@ -84,10 +79,7 @@ class Pty implements IPty {
       rows: this.rows,
       cwd: opt.cwd ?? null,
       env: opt.env ?? {},
-      encoding: opt.encoding ?? null,
-      handleFlowControl: opt.handleFlowControl ?? null,
-      flowControlPause: opt.flowControlPause ?? null,
-      flowControlResume: opt.flowControlResume ?? null,
+      envRemove: opt.envRemove ?? null,
     };
 
     this._init = invoke<number>("pty_spawn", invokeArgs).then((pid) => {
@@ -99,9 +91,20 @@ class Pty implements IPty {
   }
 
   resize(cols: number, rows: number, pixelWidth?: number, pixelHeight?: number): void {
-    if (this.cols === cols && this.rows === rows) return;
+    const nextPixelWidth = pixelWidth ?? 0;
+    const nextPixelHeight = pixelHeight ?? 0;
+    if (
+      this.cols === cols &&
+      this.rows === rows &&
+      this.pixelWidth === nextPixelWidth &&
+      this.pixelHeight === nextPixelHeight
+    ) {
+      return;
+    }
     this.cols = cols;
     this.rows = rows;
+    this.pixelWidth = nextPixelWidth;
+    this.pixelHeight = nextPixelHeight;
     this._init.then(() =>
       invoke("pty_resize", { pid: this.pid, cols, rows, pixelWidth, pixelHeight }).catch((e) =>
         console.error("Resize error:", e)

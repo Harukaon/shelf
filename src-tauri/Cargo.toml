@@ -22,3 +22,8 @@ uuid = { version = "1", features = ["v4"] }
 trash = "5"
 dirs = "5"
 portable-pty = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+rig-core = "0.37"
+thiserror = "2"
+url = "2"
+futures-util = "0.3"

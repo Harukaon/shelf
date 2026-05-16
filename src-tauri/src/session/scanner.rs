@@ -1,4 +1,4 @@
-use crate::session::Session;
+use crate::session::{Session, SessionProvider};
 use chrono::{DateTime, Utc};
 use std::fs;
 use std::path::PathBuf;
@@ -14,7 +14,8 @@ pub fn scan_sessions(workspace_path: &str) -> Result<Vec<Session>, String> {
 
     let mut sessions = Vec::new();
 
-    let entries = fs::read_dir(&session_dir).map_err(|e| format!("Failed to read sessions dir: {}", e))?;
+    let entries =
+        fs::read_dir(&session_dir).map_err(|e| format!("Failed to read sessions dir: {}", e))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
@@ -73,10 +74,7 @@ fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
                 if first_prompt.is_none() {
                     if let Some(content) = value["message"]["content"].as_str() {
                         let trimmed = content.trim();
-                        let preview: String = trimmed
-                            .chars()
-                            .take(80)
-                            .collect();
+                        let preview: String = trimmed.chars().take(80).collect();
                         first_prompt = Some(if trimmed.len() > 80 {
                             format!("{}...", preview)
                         } else {
@@ -132,6 +130,7 @@ fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
         updated_at,
         file_path: path.to_string_lossy().to_string(),
         version,
+        provider: SessionProvider::Claude,
     }))
 }
 
