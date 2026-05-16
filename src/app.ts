@@ -2,7 +2,7 @@ import "@xterm/xterm/css/xterm.css";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { tauriInvoke, refreshIcons, escapeHtml, formatDate } from "./helpers";
-import { Session, FileEntry, TabInfo, SessionProvider, AiSettings, AiSessionMap, AiRunResponse, AiModelListResponse, AiHistoryMessage } from "./types";
+import { Session, FileEntry, TabInfo, SessionProvider, AiSettings, AiSessionMap, AiRunResponse, AiModelListResponse, AiHistoryMessage, AiGroup, ShellCommandApproval } from "./types";
 import { TabManager } from "./modules/tabs";
 import { WorkspaceManager } from "./modules/workspace";
 import { createTerminalTab, repaintTerminal, scheduleTerminalRefit, writeToPty } from "./modules/terminal";
@@ -65,7 +65,7 @@ type SavedAppState = {
 };
 
 type AiStreamEvent = {
-  kind: "text" | "tool-start" | "tool-end" | "tool-result" | "error" | "done";
+  kind: "text" | "tool-start" | "tool-end" | "tool-result" | "shell-approval" | "error" | "done";
   id?: string | null;
   text?: string | null;
   tool?: string | null;
@@ -77,6 +77,8 @@ type AiToolMessage = {
   el: HTMLElement;
   statusEl: HTMLElement;
   codeEl: HTMLElement;
+  actionsEl?: HTMLElement;
+  approval?: ShellCommandApproval;
 };
 
 class App {
@@ -106,6 +108,11 @@ class App {
   aiStreamTools = new Map<string, AiToolMessage>();
   aiHistory: AiHistoryMessage[] = [];
   aiBusy = false;
+  aiInputComposing = false;
+  aiPendingShellApproval = false;
+  aiShellAutoApprove = false;
+  expandedAiOrganizer = true;
+  collapsedAiCategories = new Set<string>();
 
   tabList!: HTMLElement;
   tabAddBtn!: HTMLElement;
@@ -231,12 +238,16 @@ class App {
     }
   }
 
-  private _sessionKey(session: Session): string {
-    return `${session.provider}:${session.id}`;
+  private async _saveAiSessionMap() {
+    try {
+      await tauriInvoke("save_ai_session_map", { map: this.aiSessionMap });
+    } catch (e) {
+      console.error("[Shelf] save AI session map failed:", e);
+    }
   }
 
   private _displayTitleForSession(session: Session): string {
-    return this.aiSessionMap.sessions[this._sessionKey(session)]?.aliasTitle || session.display_title;
+    return session.display_title;
   }
 
   private async _loadSavedAppState() {
@@ -503,6 +514,22 @@ class App {
         tab.title = title;
       }
     }
+  }
+
+  private _findSessionByKey(sessionKey: string): { session: Session; workspacePath: string } | null {
+    const [provider, sessionId] = sessionKey.split(":", 2) as [SessionProvider | undefined, string | undefined];
+    if ((provider !== "claude" && provider !== "codex") || !sessionId) return null;
+
+    for (const [workspaceKey, sessions] of this.ws.sessions) {
+      if (!workspaceKey.startsWith(`${provider}:`)) continue;
+      const session = sessions.find((item) => item.id === sessionId);
+      if (!session) continue;
+      return {
+        session,
+        workspacePath: workspaceKey.slice(workspaceKey.indexOf(":") + 1),
+      };
+    }
+    return null;
   }
 
   private _linkPendingTabsFromSnapshot(workspacePath: string, provider: SessionProvider, sessions: Session[], oldSessions: Session[]) {
@@ -874,6 +901,10 @@ class App {
       <div class="ai-window-header">
         <div class="ai-window-title"><i data-lucide="bot"></i><span>${t("ai.title")}</span></div>
         <div class="ai-window-actions">
+          <label class="ai-trust-toggle" title="${t("ai.shell_trust_hint")}">
+            <input id="ai-shell-trust" type="checkbox">
+            <span>${t("ai.shell_trust")}</span>
+          </label>
           <button class="ai-icon-btn" id="ai-clear" title="${t("ai.clear")}"><i data-lucide="trash-2"></i></button>
           <button class="ai-icon-btn" id="ai-close" title="${t("ai.close")}"><i data-lucide="x"></i></button>
         </div>
@@ -889,6 +920,13 @@ class App {
     this.aiWindowEl = panel;
     this.aiLogEl = panel.querySelector("#ai-log") as HTMLElement;
     this.aiInputEl = panel.querySelector("#ai-input") as HTMLTextAreaElement;
+    const trustToggle = panel.querySelector("#ai-shell-trust") as HTMLInputElement | null;
+    if (trustToggle) {
+      trustToggle.checked = this.aiShellAutoApprove;
+      trustToggle.addEventListener("change", () => {
+        this.aiShellAutoApprove = trustToggle.checked;
+      });
+    }
 
     panel.querySelector("#ai-close")!.addEventListener("click", () => {
       panel.classList.add("hidden");
@@ -896,8 +934,10 @@ class App {
     });
     panel.querySelector("#ai-clear")!.addEventListener("click", () => this._clearAiHistory());
     panel.querySelector("#ai-send")!.addEventListener("click", () => this._sendAiMessage());
+    this.aiInputEl.addEventListener("compositionstart", () => { this.aiInputComposing = true; });
+    this.aiInputEl.addEventListener("compositionend", () => { this.aiInputComposing = false; });
     this.aiInputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && !e.shiftKey && !this.aiInputComposing && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         this._sendAiMessage();
       }
@@ -950,9 +990,14 @@ class App {
     this._appendAiMessage("user", message);
     const history = this.aiHistory.slice();
     this.aiHistory.push({ role: "user", content: message });
+    await this._runAiTurn(message, history, true);
+  }
+
+  private async _runAiTurn(message: string, history: AiHistoryMessage[], rollbackUserOnError = false) {
     this.aiStreamAssistantMsg = null;
     this.aiStreamTools.clear();
     this.aiBusy = true;
+    this.aiPendingShellApproval = false;
     this._setAiSending(true);
 
     try {
@@ -964,6 +1009,7 @@ class App {
           history,
           workspacePath: this.selectedWorkspace || active?.workspacePath || null,
           provider: active?.sessionProvider || this.ws.selectedProvider || null,
+          shellAutoApprove: this.aiShellAutoApprove,
         },
       });
       this.aiSessionMap = response.map;
@@ -973,15 +1019,22 @@ class App {
       this._renderTabs();
       this._renderWorkspaces();
     } catch (e) {
-      this.aiHistory.pop();
-      this._appendAiMessage("assistant", t("ai.failed", String(e)));
+      if (this._isShellApprovalInterrupt(e)) {
+        this.aiPendingShellApproval = true;
+      } else {
+        if (rollbackUserOnError) this.aiHistory.pop();
+        this._appendAiMessage("assistant", t("ai.failed", String(e)));
+      }
     } finally {
       this._stopAiStreamListener();
       this.aiStreamAssistantMsg = null;
-      this.aiStreamTools.clear();
       this.aiBusy = false;
       this._setAiSending(false);
     }
+  }
+
+  private _isShellApprovalInterrupt(error: unknown): boolean {
+    return String(error).includes("SHELF_SHELL_APPROVAL_REQUIRED:");
   }
 
   private _setAiSending(sending: boolean) {
@@ -1016,6 +1069,8 @@ class App {
         this._finishAiToolCall(payload.id || "", payload.tool || "tool", payload.text || "");
       } else if (payload.kind === "tool-result") {
         this._setAiToolResult(payload.id || "", payload.text || "");
+      } else if (payload.kind === "shell-approval") {
+        this._showShellApproval(payload.id || "", payload.tool || "run_shell_command", payload.text || "");
       } else if (payload.kind === "error" && payload.text) {
         this._appendAiMessage("assistant", payload.text);
       }
@@ -1073,7 +1128,6 @@ class App {
 
   private _appendAiToolCall(id: string, tool: string, args: string) {
     if (!this.aiLogEl) return;
-    void args;
     this.aiStreamAssistantMsg = null;
     const msg = document.createElement("div");
     msg.className = "ai-msg tool";
@@ -1084,7 +1138,7 @@ class App {
       </div>
       <details class="ai-tool-details">
         <summary>${escapeHtml(t("ai.tool_details"))}</summary>
-        <pre><code class="ai-tool-json"></code></pre>
+        <pre><code class="ai-tool-json">${escapeHtml(this._formatJsonLike(args))}</code></pre>
       </details>`;
     this.aiLogEl.appendChild(msg);
 
@@ -1094,6 +1148,7 @@ class App {
       el: msg,
       statusEl: msg.querySelector(".ai-tool-state") as HTMLElement,
       codeEl: msg.querySelector(".ai-tool-json") as HTMLElement,
+      actionsEl: undefined,
     };
     this.aiStreamTools.set(id, toolMessage);
     this.aiLogEl.scrollTop = this.aiLogEl.scrollHeight;
@@ -1123,6 +1178,88 @@ class App {
     const last = this.aiHistory[this.aiHistory.length - 1];
     if (last?.role === "tool" && last.tool === tool && last.content === content) return;
     this.aiHistory.push({ role: "tool", tool, content });
+  }
+
+  private _showShellApproval(id: string, tool: string, value: string) {
+    const approval = this._parseShellApproval(value);
+    if (!approval) return;
+    const toolMessage = this._getOrCreateToolMessage(id, tool);
+    toolMessage.approval = approval;
+    toolMessage.statusEl.textContent = t("ai.shell_approval_required");
+    toolMessage.el.classList.add("approval");
+    toolMessage.codeEl.textContent = this._formatJsonLike(JSON.stringify(approval));
+
+    let actions = toolMessage.actionsEl;
+    if (!actions) {
+      actions = document.createElement("div");
+      actions.className = "ai-tool-actions";
+      toolMessage.el.appendChild(actions);
+      toolMessage.actionsEl = actions;
+    }
+    actions.innerHTML = `
+      <button class="ai-tool-approve" title="${escapeHtml(t("ai.shell_approve"))}">✓</button>
+      <button class="ai-tool-deny" title="${escapeHtml(t("ai.shell_deny"))}">×</button>`;
+    actions.querySelector(".ai-tool-approve")!.addEventListener("click", () => this._approveShellCommand(toolMessage));
+    actions.querySelector(".ai-tool-deny")!.addEventListener("click", () => this._denyShellCommand(toolMessage));
+    if (this.aiLogEl) this.aiLogEl.scrollTop = this.aiLogEl.scrollHeight;
+  }
+
+  private _parseShellApproval(value: string): ShellCommandApproval | null {
+    try {
+      return JSON.parse(value) as ShellCommandApproval;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  private async _approveShellCommand(toolMessage: AiToolMessage) {
+    if (!toolMessage.approval || this.aiBusy) return;
+    const approval = toolMessage.approval;
+    toolMessage.statusEl.textContent = t("ai.shell_running");
+    toolMessage.actionsEl?.querySelectorAll("button").forEach((button) => {
+      (button as HTMLButtonElement).disabled = true;
+    });
+    try {
+      const result = await tauriInvoke<unknown>("execute_approved_shell_command", {
+        args: {
+          command: approval.command,
+          cwd: approval.cwd,
+          timeoutMs: approval.timeoutMs,
+          maxBytes: approval.maxBytes,
+          maxLines: approval.maxLines,
+          approved: true,
+        },
+      });
+      const resultText = JSON.stringify(result, null, 2);
+      toolMessage.statusEl.textContent = t("ai.tool_done");
+      toolMessage.el.classList.add("done");
+      toolMessage.actionsEl?.remove();
+      toolMessage.actionsEl = undefined;
+      toolMessage.codeEl.textContent = resultText;
+      this._recordAiToolHistory(toolMessage.tool, resultText);
+      await this._continueAfterToolResult();
+    } catch (e) {
+      toolMessage.statusEl.textContent = t("ai.failed", String(e));
+      toolMessage.el.classList.add("error");
+      toolMessage.actionsEl?.querySelectorAll("button").forEach((button) => {
+        (button as HTMLButtonElement).disabled = false;
+      });
+    }
+  }
+
+  private _denyShellCommand(toolMessage: AiToolMessage) {
+    toolMessage.statusEl.textContent = t("ai.shell_denied");
+    toolMessage.el.classList.add("denied");
+    toolMessage.actionsEl?.remove();
+    toolMessage.actionsEl = undefined;
+    this.aiPendingShellApproval = false;
+  }
+
+  private async _continueAfterToolResult() {
+    this.aiPendingShellApproval = false;
+    const history = this.aiHistory.slice();
+    const message = "Continue from the approved shell command result.";
+    await this._runAiTurn(message, history, false);
   }
 
   private _getOrCreateToolMessage(id: string, tool: string): AiToolMessage {
@@ -1522,9 +1659,168 @@ class App {
       this.workspaceList.appendChild(pinnedDiv);
     }
 
+    this.workspaceList.appendChild(this._renderAiOrganizerGroup());
     this.workspaceList.appendChild(this._renderProviderGroup("claude", "Claude Code"));
     this.workspaceList.appendChild(this._renderProviderGroup("codex", "Codex"));
     refreshIcons();
+  }
+
+  private _renderAiOrganizerGroup(): HTMLElement {
+    const group = document.createElement("div");
+    group.className = "provider-section provider-root ai-organizer-root";
+    const categories = this._aiCategories();
+    const mappingCount = this._aiMappingEntries().length;
+
+    const header = document.createElement("div");
+    header.className = "provider-header provider-root-header ai-organizer-header";
+    header.innerHTML = `
+      <i data-lucide="chevron-right" class="provider-arrow${this.expandedAiOrganizer ? " expanded" : ""}"></i>
+      <span class="provider-title">${escapeHtml(t("ai.organizer_section"))}</span>
+      <span class="provider-count">${mappingCount}</span>`;
+    header.addEventListener("click", () => {
+      this.expandedAiOrganizer = !this.expandedAiOrganizer;
+      this._renderWorkspaces();
+    });
+    group.appendChild(header);
+
+    if (!this.expandedAiOrganizer) return group;
+
+    if (categories.length === 0 || mappingCount === 0) return group;
+
+    for (const category of categories) {
+      const entries = this._aiMappingEntries(category.id);
+      if (entries.length === 0) continue;
+      group.appendChild(this._renderAiCategoryItem(category, entries));
+    }
+
+    return group;
+  }
+
+  private _aiCategories(): AiGroup[] {
+    return Object.values(this.aiSessionMap.groups)
+      .filter((group) => this._aiMappingEntries(group.id).length > 0)
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  }
+
+  private _aiMappingEntries(categoryId?: string): Array<{ sessionKey: string; session: Session; workspacePath: string }> {
+    const entries: Array<{ sessionKey: string; session: Session; workspacePath: string }> = [];
+    for (const [sessionKey, meta] of Object.entries(this.aiSessionMap.sessions)) {
+      if (!meta?.groupId) continue;
+      if (categoryId && meta.groupId !== categoryId) continue;
+      const resolved = this._findSessionByKey(sessionKey);
+      if (!resolved) continue;
+      entries.push({ sessionKey, ...resolved });
+    }
+    return entries.sort((a, b) => b.session.updated_at.localeCompare(a.session.updated_at));
+  }
+
+  private _renderAiCategoryItem(
+    category: AiGroup,
+    entries: Array<{ sessionKey: string; session: Session; workspacePath: string }>,
+  ): HTMLElement {
+    const categoryEl = document.createElement("div");
+    categoryEl.className = "ai-category-item";
+    const isExpanded = !this.collapsedAiCategories.has(category.id);
+
+    const header = document.createElement("div");
+    header.className = "workspace-header ai-category-header";
+    header.innerHTML = `
+      <i data-lucide="chevron-right" class="ws-arrow${isExpanded ? " expanded" : ""}"></i>
+      <i data-lucide="${isExpanded ? "folder-open" : "folder"}"></i>
+      <span class="ai-category-name" title="${escapeHtml(category.description || category.name)}">${escapeHtml(category.name)}</span>
+      <span class="provider-count">${entries.length}</span>`;
+    header.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (isExpanded) this.collapsedAiCategories.add(category.id);
+      else this.collapsedAiCategories.delete(category.id);
+      this._renderWorkspaces();
+    });
+    header.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showContextMenu([
+        { label: t("context.rename"), action: () => this._renameAiCategoryPrompt(category) },
+        { label: t("context.delete"), action: () => this._deleteAiCategory(category.id) },
+      ], e.clientX, e.clientY);
+    });
+    categoryEl.appendChild(header);
+
+    if (isExpanded) {
+      const sessionList = document.createElement("div");
+      sessionList.className = "workspace-sessions show ai-category-sessions";
+      for (const entry of entries) {
+        sessionList.appendChild(this._renderAiMappedSessionItem(entry.sessionKey, entry.session, entry.workspacePath));
+      }
+      categoryEl.appendChild(sessionList);
+    }
+    return categoryEl;
+  }
+
+  private _renderAiMappedSessionItem(sessionKey: string, session: Session, wsPath: string): HTMLElement {
+    const item = this._renderSessionItem(session, wsPath, true);
+    item.classList.add("ai-mapped-session");
+    item.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showContextMenu([
+        { label: t("context.rename"), action: () => this._renameSessionPrompt(session) },
+        { label: t("ai.remove_mapping"), action: () => this._removeAiMapping(sessionKey) },
+      ], e.clientX, e.clientY);
+    });
+    return item;
+  }
+
+  private _renameAiCategoryPrompt(category: AiGroup) {
+    const panel = document.createElement("div");
+    panel.className = "settings-panel";
+    panel.innerHTML = `
+      <div class="settings-title">${t("ai.rename_category")}</div>
+      <div class="settings-row">
+        <input id="rename-input" value="${escapeHtml(category.name)}" style="flex:1;padding:6px 10px;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;font-family:inherit;font-size:13px;outline:none;" autofocus>
+      </div>
+      <div class="settings-actions">
+        <button id="rename-save">${t("settings.save")}</button>
+        <button id="rename-cancel">${t("settings.cancel")}</button>
+      </div>`;
+    const backdrop = document.createElement("div");
+    backdrop.className = "picker-backdrop";
+    const close = () => { panel.remove(); backdrop.remove(); };
+    backdrop.addEventListener("click", close);
+    document.body.appendChild(backdrop);
+    document.body.appendChild(panel);
+    const input = panel.querySelector("#rename-input") as HTMLInputElement;
+    input.focus();
+    input.select();
+    const doSave = async () => {
+      const nextName = input.value.trim();
+      if (!nextName) return;
+      const current = this.aiSessionMap.groups[category.id];
+      if (!current) return close();
+      this.aiSessionMap.groups[category.id] = { ...current, name: nextName };
+      await this._saveAiSessionMap();
+      close();
+      this._renderWorkspaces();
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") doSave(); });
+    panel.querySelector("#rename-save")!.addEventListener("click", doSave);
+    panel.querySelector("#rename-cancel")!.addEventListener("click", close);
+  }
+
+  private async _deleteAiCategory(categoryId: string) {
+    delete this.aiSessionMap.groups[categoryId];
+    this.collapsedAiCategories.delete(categoryId);
+    for (const [sessionKey, meta] of Object.entries(this.aiSessionMap.sessions)) {
+      if (meta.groupId !== categoryId) continue;
+      delete this.aiSessionMap.sessions[sessionKey];
+    }
+    await this._saveAiSessionMap();
+    this._renderWorkspaces();
+  }
+
+  private async _removeAiMapping(sessionKey: string) {
+    delete this.aiSessionMap.sessions[sessionKey];
+    await this._saveAiSessionMap();
+    this._renderWorkspaces();
   }
 
   private _renderProviderGroup(provider: SessionProvider, title: string): HTMLElement {

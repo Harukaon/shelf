@@ -4269,6 +4269,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-shell",
  "thiserror 2.0.18",
+ "tokio",
  "trash",
  "url",
  "uuid",
@@ -5101,6 +5102,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "windows-sys 0.61.2",
 ]

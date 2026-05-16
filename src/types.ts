@@ -95,3 +95,12 @@ export interface AiModelListResponse {
   baseUrl: string;
   models: string[];
 }
+
+export interface ShellCommandApproval {
+  command: string;
+  cwd: string;
+  timeoutMs: number;
+  maxBytes: number;
+  maxLines: number;
+  risk: "normal" | "dangerous";
+}

@@ -323,6 +323,31 @@ body[data-platform="windows"] #tab-bar {
 }
 .provider-new-btn:hover { opacity: 1; }
 
+.ai-category-item {
+  padding: 0;
+}
+
+.ai-category-header {
+  padding-left: 4px;
+}
+
+.ai-category-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-category-sessions .session-item,
+.ai-mapped-session {
+  padding-left: 24px;
+}
+
+.ai-mapped-session .provider-badge {
+  opacity: 0.85;
+}
+
 .workspace-sessions { display: none; padding-left: 0; }
 .workspace-sessions.show { display: block; }
 
@@ -580,6 +605,30 @@ body[data-platform="windows"] #tab-bar {
   gap: 4px;
 }
 
+.ai-trust-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 4px;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ai-trust-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.ai-trust-toggle input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .ai-icon-btn {
   width: 26px;
   height: 26px;
@@ -710,6 +759,55 @@ body[data-platform="windows"] #tab-bar {
 
 .ai-msg.tool.done .ai-tool-state {
   color: var(--accent);
+}
+
+.ai-msg.tool.approval {
+  border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+  background: color-mix(in srgb, var(--bg-primary) 78%, var(--red));
+}
+
+.ai-msg.tool.approval .ai-tool-state {
+  color: var(--red);
+}
+
+.ai-msg.tool.denied {
+  opacity: 0.72;
+}
+
+.ai-tool-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ai-tool-actions button {
+  width: 28px;
+  height: 24px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 800;
+}
+
+.ai-tool-actions button:hover {
+  background: var(--bg-hover);
+}
+
+.ai-tool-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ai-tool-approve {
+  color: var(--green) !important;
+}
+
+.ai-tool-deny {
+  color: var(--red) !important;
 }
 
 .ai-tool-details {
