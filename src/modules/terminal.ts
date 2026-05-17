@@ -13,6 +13,63 @@ type TerminalTabOptions = {
   command?: { bin: string; args: string[] };
 };
 
+const COMMAND_FALLBACK_WINDOW_MS = 4_000;
+const COMMAND_FALLBACK_MAX_OUTPUT = 12_000;
+
+function quoteShellArg(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function shellCommandLine(bin: string, args: string[]): string {
+  return [bin, ...args].map(quoteShellArg).join(" ");
+}
+
+function fallbackShellForCommand(options?: TerminalTabOptions): string {
+  return options?.shell || (navigator.platform.toLowerCase().includes("win") ? "powershell" : "zsh");
+}
+
+function fallbackShellArgs(shell: string): string[] {
+  return loginShellArgs(shell);
+}
+
+function shouldFallbackCommand(output: string, exitCode?: number): boolean {
+  if (exitCode === 0) return false;
+  const normalized = output.toLowerCase();
+  return (
+    normalized.includes("env: node: no such file or directory") ||
+    normalized.includes("node: command not found") ||
+    normalized.includes("codex: command not found") ||
+    normalized.includes("claude: command not found") ||
+    normalized.includes("command not found: codex") ||
+    normalized.includes("command not found: claude") ||
+    normalized.includes("bad interpreter")
+  );
+}
+
+function spawnCommandPty(
+  command: { bin: string; args: string[] },
+  options: TerminalTabOptions | undefined,
+  terminal: Terminal,
+): { pty: IPty; fallbackShell: string; fallbackLine: string } {
+  const spawnOpts: IPtyForkOptions = { cols: terminal.cols, rows: terminal.rows };
+  if (options?.cwd) spawnOpts.cwd = options.cwd;
+  if (shouldRemoveInheritedNoColor(options)) {
+    spawnOpts.envRemove = ["NO_COLOR"];
+  }
+  const pty = spawn(command.bin, command.args, spawnOpts);
+  return {
+    pty,
+    fallbackShell: fallbackShellForCommand(options),
+    fallbackLine: shellCommandLine(command.bin, command.args),
+  };
+}
+
+function spawnShellPty(shell: string, options: TerminalTabOptions | undefined, terminal: Terminal): IPty {
+  const spawnOpts: IPtyForkOptions = { cols: terminal.cols, rows: terminal.rows };
+  if (options?.cwd) spawnOpts.cwd = options.cwd;
+  return spawn(shell, fallbackShellArgs(shell), spawnOpts);
+}
+
 function terminalFontOptions() {
   const platform = navigator.platform.toLowerCase();
   if (platform.includes("mac")) {
@@ -196,25 +253,41 @@ export function createTerminalTab(
   };
 
   let pty: IPty | undefined;
+  let fallbackUsed = false;
+  const spawnStartedAt = Date.now();
+  let earlyOutput = "";
+  const decoder = new TextDecoder();
   try {
-    const spawnOpts: IPtyForkOptions = { cols: terminal.cols, rows: terminal.rows };
-    if (options?.cwd) spawnOpts.cwd = options.cwd;
-    const cmdBin = options?.command?.bin || options?.shell || "zsh";
-    const cmdArgs = options?.command?.args || loginShellArgs(cmdBin);
-    if (shouldRemoveInheritedNoColor(options)) {
-      spawnOpts.envRemove = ["NO_COLOR"];
-    }
-    pty = spawn(cmdBin, cmdArgs, spawnOpts);
+    const commandFallback = options?.command
+      ? spawnCommandPty(options.command, options, terminal)
+      : undefined;
+    pty = commandFallback
+      ? commandFallback.pty
+      : spawnShellPty(options?.shell || "zsh", options, terminal);
 
     const ptyInit: Promise<number> = (pty as any)._init as Promise<number>;
-    console.log(`[Terminal] tab ${tabId} spawning ${cmdBin} ${cmdArgs.join(" ")} cwd=${options?.cwd}`);
+    const logCommand = options?.command
+      ? `${options.command.bin} ${options.command.args.join(" ")}`
+      : options?.shell || "zsh";
+    console.log(`[Terminal] tab ${tabId} spawning ${logCommand} cwd=${options?.cwd}`);
     ptyInit
       .then((pid: number) => {
         console.log(`[Terminal] tab ${tabId} pid=${pid} ok`);
       })
       .catch((e: unknown) => {
-        tabInfo.ptyExited = true;
+        if (commandFallback && !fallbackUsed) {
+          fallbackUsed = true;
+          console.warn(`[Terminal] tab ${tabId} direct command spawn failed, falling back to shell:`, e);
+          terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
+          terminal.writeln("Falling back to login shell.");
+          pty = spawnShellPty(commandFallback.fallbackShell, options, terminal);
+          tabInfo.pty = pty;
+          bindPty(pty, true);
+          pty.write(`${commandFallback.fallbackLine}\r`);
+          return;
+        }
         console.error(`[Terminal] tab ${tabId} spawn FAILED:`, e);
+        tabInfo.ptyExited = true;
         terminal.clear();
         terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
         terminal.writeln("Try closing some tabs or restarting Shelf.");
@@ -222,9 +295,34 @@ export function createTerminalTab(
 
     tabInfo.pty = pty;
 
-    pty.onData((data: Uint8Array) => {
-      terminal.write(data);
-    });
+    const bindPty = (boundPty: IPty, fallback: boolean) => {
+      boundPty.onData((data: Uint8Array) => {
+        terminal.write(data);
+        if (!fallback && commandFallback && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS) {
+          earlyOutput += decoder.decode(data, { stream: true });
+          if (earlyOutput.length > COMMAND_FALLBACK_MAX_OUTPUT) {
+            earlyOutput = earlyOutput.slice(-COMMAND_FALLBACK_MAX_OUTPUT);
+          }
+        }
+      });
+      boundPty.onExit((exit) => {
+        if (!fallback && commandFallback && !fallbackUsed && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS && shouldFallbackCommand(earlyOutput, exit.exitCode)) {
+          fallbackUsed = true;
+          console.warn(`[Terminal] tab ${tabId} command exited early with environment error, falling back to shell.`);
+          terminal.write("\r\nFalling back to login shell.\r\n");
+          pty = spawnShellPty(commandFallback.fallbackShell, options, terminal);
+          tabInfo.pty = pty;
+          bindPty(pty, true);
+          pty.write(`${commandFallback.fallbackLine}\r`);
+          return;
+        }
+        tabInfo.ptyExited = true;
+        console.log(`[Terminal] pty exited tab ${tabId} pid=${boundPty.pid} code=`, exit.exitCode, "signal:", exit.signal);
+        terminal.write(`\r\n${t("process.exited")}\r\n`);
+      });
+    };
+
+    bindPty(pty, false);
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
         onPtyWrite(tabId, "\x1b[13;2u");
@@ -235,11 +333,6 @@ export function createTerminalTab(
     });
     terminal.onData((data: string) => {
       onPtyWrite(tabId, data);
-    });
-    pty.onExit((exit) => {
-      tabInfo.ptyExited = true;
-      console.log(`[Terminal] pty exited tab ${tabId} pid=${pty?.pid} code=`, exit.exitCode, "signal:", exit.signal);
-      terminal.write(`\r\n${t("process.exited")}\r\n`);
     });
   } catch (e) {
     tabInfo.ptyExited = true;
