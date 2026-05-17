@@ -35,6 +35,7 @@ pub fn run() {
             commands::ai::save_ai_settings,
             commands::ai::get_ai_session_map,
             commands::ai::save_ai_session_map,
+            commands::ai::stop_ai_organizer,
             commands::ai::execute_approved_shell_command,
             commands::ai::list_ai_models,
             commands::ai::run_ai_organizer,

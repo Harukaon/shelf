@@ -460,8 +460,9 @@ class App {
     _reason: string,
   ): boolean {
     const key = this.ws.workspaceKey(workspacePath, provider);
+    const hadSnapshot = this.ws.sessions.has(key);
     const oldSessions = this.ws.sessions.get(key) || [];
-    const changed = !this._sessionListsEquivalent(oldSessions, sessions);
+    const changed = !hadSnapshot || !this._sessionListsEquivalent(oldSessions, sessions);
     if (!changed) return false;
 
     this.ws.sessions.set(key, sessions);
@@ -933,7 +934,10 @@ class App {
       this.aiBtn.classList.remove("active");
     });
     panel.querySelector("#ai-clear")!.addEventListener("click", () => this._clearAiHistory());
-    panel.querySelector("#ai-send")!.addEventListener("click", () => this._sendAiMessage());
+    panel.querySelector("#ai-send")!.addEventListener("click", () => {
+      if (this.aiBusy) this._stopAiRun();
+      else this._sendAiMessage();
+    });
     this.aiInputEl.addEventListener("compositionstart", () => { this.aiInputComposing = true; });
     this.aiInputEl.addEventListener("compositionend", () => { this.aiInputComposing = false; });
     this.aiInputEl.addEventListener("keydown", (e) => {
@@ -993,6 +997,16 @@ class App {
     await this._runAiTurn(message, history, true);
   }
 
+  private async _stopAiRun() {
+    if (!this.aiBusy) return;
+    try {
+      await tauriInvoke("stop_ai_organizer");
+      this._setAiSending(false);
+    } catch (e) {
+      console.error("[Shelf] stop AI failed:", e);
+    }
+  }
+
   private async _runAiTurn(message: string, history: AiHistoryMessage[], rollbackUserOnError = false) {
     this.aiStreamAssistantMsg = null;
     this.aiStreamTools.clear();
@@ -1021,6 +1035,8 @@ class App {
     } catch (e) {
       if (this._isShellApprovalInterrupt(e)) {
         this.aiPendingShellApproval = true;
+      } else if (this._isAiCancelled(e)) {
+        this._appendAiMessage("system", t("ai.stopped"));
       } else {
         if (rollbackUserOnError) this.aiHistory.pop();
         this._appendAiMessage("assistant", t("ai.failed", String(e)));
@@ -1037,12 +1053,17 @@ class App {
     return String(error).includes("SHELF_SHELL_APPROVAL_REQUIRED:");
   }
 
+  private _isAiCancelled(error: unknown): boolean {
+    return String(error).includes("SHELF_AI_CANCELLED:");
+  }
+
   private _setAiSending(sending: boolean) {
     const send = this.aiWindowEl?.querySelector("#ai-send") as HTMLButtonElement | null;
     const clear = this.aiWindowEl?.querySelector("#ai-clear") as HTMLButtonElement | null;
     if (send) {
-      send.disabled = sending;
-      send.textContent = sending ? t("ai.running") : t("ai.send");
+      send.disabled = false;
+      send.classList.toggle("stop", sending);
+      send.textContent = sending ? t("ai.stop") : t("ai.send");
     }
     if (clear) clear.disabled = sending;
   }
@@ -1916,12 +1937,7 @@ class App {
       }
     });
     header.addEventListener("click", () => {
-      if (isExpanded) {
-        this.ws.expandedWorkspaces.delete(key);
-      } else {
-        this.ws.select(ws.path, ws.provider);
-      }
-      this._renderWorkspaces();
+      this._toggleWorkspaceExpansion(ws.path, ws.provider);
     });
     wsDiv.appendChild(header);
 
@@ -1946,6 +1962,25 @@ class App {
       wsDiv.appendChild(sessionList);
     }
     return wsDiv;
+  }
+
+  private _toggleWorkspaceExpansion(wsPath: string, provider: SessionProvider) {
+    const key = this.ws.workspaceKey(wsPath, provider);
+    const shouldExpand = !this.ws.expandedWorkspaces.has(key);
+
+    if (shouldExpand) {
+      this.ws.expandedProviders.add(provider);
+      this.ws.expandedWorkspaces.add(key);
+      if (!this.ws.sessions.has(key)) {
+        this._refreshWorkspaceSessions(wsPath, provider, "manual")
+          .catch((error) => console.error("Expand workspace scan failed:", error))
+          .finally(() => this._renderWorkspaces());
+      }
+    } else {
+      this.ws.expandedWorkspaces.delete(key);
+    }
+
+    this._renderWorkspaces();
   }
 
   private _renderSessionItem(session: Session, wsPath: string, showProviderBadge = false): HTMLElement {

@@ -683,6 +683,11 @@ body[data-platform="windows"] #tab-bar {
   filter: brightness(1.05);
 }
 
+.ai-send-btn.stop {
+  background: var(--red);
+  border-color: var(--red);
+}
+
 .ai-log {
   flex: 1;
   overflow-y: auto;

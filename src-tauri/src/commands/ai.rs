@@ -19,13 +19,14 @@ use std::{
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::Stdio,
+    sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
 use tauri::{AppHandle, Emitter};
 use tokio::{
     io::AsyncReadExt,
     process::Command,
-    time::{timeout, Duration},
+    time::{sleep, Duration},
 };
 use url::Url;
 
@@ -42,6 +43,8 @@ const SHELL_DEFAULT_MAX_BYTES: usize = 30_000;
 const SHELL_MAX_OUTPUT_BYTES: usize = 100_000;
 const SHELL_DEFAULT_MAX_LINES: usize = 500;
 const SHELL_MAX_OUTPUT_LINES: usize = 2_000;
+const AI_CANCELLED_PREFIX: &str = "SHELF_AI_CANCELLED:";
+static AI_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
 const AI_ORGANIZER_PREAMBLE: &str = r#"
 You are Shelf's AI session organizer.
 
@@ -51,6 +54,7 @@ Rules:
 - A mapping is only a reference to an original conversation: provider + sessionId + category metadata.
 - Never delete original conversations. You do not have a tool that deletes conversations.
 - Removing or moving mappings must only affect Shelf's AI organizer map.
+- Session record editing is allowed only through mounted session ids. Use session-record tools with provider + sessionId; do not write arbitrary unmounted record files.
 - Keep category names short and useful for a developer's sidebar.
 - Prefer the existing conversation title as the display name. Do not create alias titles.
 - Before mapping sessions, list mounted paths and list/search session records as needed.
@@ -178,6 +182,25 @@ struct ReadFileLinesArgs {
 #[serde(rename_all = "camelCase")]
 struct ReplaceFileLinesArgs {
     file_path: String,
+    start_line: usize,
+    end_line: usize,
+    replacement: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadSessionRecordLinesArgs {
+    provider: SessionProvider,
+    session_id: String,
+    start_line: usize,
+    end_line: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReplaceSessionRecordLinesArgs {
+    provider: SessionProvider,
+    session_id: String,
     start_line: usize,
     end_line: usize,
     replacement: String,
@@ -481,31 +504,223 @@ fn clamp_shell_max_lines(value: Option<usize>) -> usize {
         .clamp(20, SHELL_MAX_OUTPUT_LINES)
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ShellRiskPlatform {
+    UnixLike,
+    Windows,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ShellToken {
+    Word(String),
+    Separator,
+}
+
 fn is_risky_shell_command(command: &str) -> bool {
-    let lower = command.to_lowercase();
-    let risky_patterns = [
-        "rm ",
-        "rm\t",
-        "rm-",
-        "rm/",
-        " rm",
-        "sudo ",
-        "mv ",
-        "cp ",
-        "chmod ",
-        "chown ",
-        "git clean",
-        "git reset",
-        "git checkout",
-        "find ",
-        "-delete",
-        ">",
-        "tee ",
-        "mkfs",
-        "diskutil erase",
-        ":(){",
-    ];
-    risky_patterns.iter().any(|pattern| lower.contains(pattern))
+    let platform = if cfg!(windows) {
+        ShellRiskPlatform::Windows
+    } else {
+        ShellRiskPlatform::UnixLike
+    };
+    is_risky_shell_command_for_platform(command, platform)
+}
+
+fn is_risky_shell_command_for_platform(command: &str, platform: ShellRiskPlatform) -> bool {
+    let mut segment = Vec::new();
+
+    for token in shell_command_tokens(command) {
+        match token {
+            ShellToken::Word(word) => segment.push(word),
+            ShellToken::Separator => {
+                if shell_segment_is_risky(&segment, platform) {
+                    return true;
+                }
+                segment.clear();
+            }
+        }
+    }
+
+    shell_segment_is_risky(&segment, platform)
+}
+
+fn shell_segment_is_risky(words: &[String], platform: ShellRiskPlatform) -> bool {
+    let Some(command_index) = shell_command_word_index(words) else {
+        return false;
+    };
+    let command = shell_command_name(&words[command_index]);
+
+    if is_delete_command_name(&command, platform) {
+        return true;
+    }
+
+    if let Some((script, script_platform)) =
+        nested_shell_script(&command, &words[command_index + 1..], platform)
+    {
+        return is_risky_shell_command_for_platform(&script, script_platform);
+    }
+
+    false
+}
+
+fn shell_command_tokens(command: &str) -> Vec<ShellToken> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut chars = command.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        if let Some(quote_ch) = quote {
+            if ch == '\\' && quote_ch != '\'' {
+                escaped = true;
+            } else if ch == quote_ch {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '\\' => escaped = true,
+            ' ' | '\t' | '\r' => push_shell_word(&mut tokens, &mut current),
+            '\n' | ';' | '|' | '&' | '(' | ')' => {
+                push_shell_word(&mut tokens, &mut current);
+                push_shell_separator(&mut tokens);
+                if (ch == '|' || ch == '&') && chars.peek() == Some(&ch) {
+                    chars.next();
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    push_shell_word(&mut tokens, &mut current);
+    tokens
+}
+
+fn push_shell_word(tokens: &mut Vec<ShellToken>, current: &mut String) {
+    let word = current.trim();
+    if !word.is_empty() {
+        tokens.push(ShellToken::Word(word.to_string()));
+    }
+    current.clear();
+}
+
+fn push_shell_separator(tokens: &mut Vec<ShellToken>) {
+    if !matches!(tokens.last(), Some(ShellToken::Separator)) {
+        tokens.push(ShellToken::Separator);
+    }
+}
+
+fn shell_command_word_index(words: &[String]) -> Option<usize> {
+    let mut index = 0;
+
+    while index < words.len() {
+        while index < words.len() && is_shell_assignment(&words[index]) {
+            index += 1;
+        }
+        if index >= words.len() {
+            return None;
+        }
+
+        let command = shell_command_name(&words[index]);
+        match command.as_str() {
+            "sudo" | "doas" => {
+                index += 1;
+                while index < words.len() && words[index].starts_with('-') {
+                    index += 1;
+                }
+            }
+            "env" => {
+                index += 1;
+                while index < words.len()
+                    && (words[index].starts_with('-') || is_shell_assignment(&words[index]))
+                {
+                    index += 1;
+                }
+            }
+            "command" | "builtin" | "noglob" | "nohup" | "time" => index += 1,
+            _ => return Some(index),
+        }
+    }
+
+    None
+}
+
+fn is_shell_assignment(word: &str) -> bool {
+    let Some((name, _)) = word.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn shell_command_name(command: &str) -> String {
+    command
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(command)
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_ascii_lowercase()
+}
+
+fn is_delete_command_name(command: &str, platform: ShellRiskPlatform) -> bool {
+    match platform {
+        ShellRiskPlatform::UnixLike => command == "rm",
+        ShellRiskPlatform::Windows => matches!(
+            command,
+            "del" | "erase" | "rd" | "rmdir" | "remove-item" | "rm" | "ri"
+        ),
+    }
+}
+
+fn nested_shell_script(
+    command: &str,
+    args: &[String],
+    platform: ShellRiskPlatform,
+) -> Option<(String, ShellRiskPlatform)> {
+    if matches!(command, "cmd" | "cmd.exe") {
+        return shell_script_after_flag(args, &["/c", "/k", "-c", "-k"])
+            .map(|script| (script, ShellRiskPlatform::Windows));
+    }
+
+    if matches!(
+        command,
+        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe"
+    ) {
+        return shell_script_after_flag(args, &["-command", "-c"])
+            .map(|script| (script, ShellRiskPlatform::Windows));
+    }
+
+    if matches!(command, "sh" | "bash" | "zsh" | "fish") {
+        return shell_script_after_flag(args, &["-c"]).map(|script| (script, platform));
+    }
+
+    None
+}
+
+fn shell_script_after_flag(args: &[String], flags: &[&str]) -> Option<String> {
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].to_ascii_lowercase();
+        if flags.iter().any(|flag| arg == *flag) {
+            let script = args[index + 1..].join(" ");
+            return (!script.trim().is_empty()).then_some(script);
+        }
+        index += 1;
+    }
+    None
 }
 
 fn shell_args_from_json(args: &str) -> RunShellCommandArgs {
@@ -528,6 +743,10 @@ fn shell_approval_payload(args: &RunShellCommandArgs) -> Value {
         "maxLines": clamp_shell_max_lines(args.max_lines),
         "risk": if is_risky_shell_command(&command) { "dangerous" } else { "normal" },
     })
+}
+
+fn ai_cancel_requested() -> bool {
+    AI_CANCEL_REQUESTED.load(Ordering::SeqCst)
 }
 
 fn truncate_shell_output(value: &str, max_bytes: usize, max_lines: usize) -> (String, bool) {
@@ -631,52 +850,63 @@ async fn execute_shell_command(args: RunShellCommandArgs) -> Value {
         buffer
     });
 
-    let timed_out = match timeout(Duration::from_millis(timeout_ms), child.wait()).await {
-        Ok(Ok(status)) => {
-            let stdout_bytes = stdout_task.await.unwrap_or_default();
-            let stderr_bytes = stderr_task.await.unwrap_or_default();
-            let stdout_raw = String::from_utf8_lossy(&stdout_bytes).to_string();
-            let stderr_raw = String::from_utf8_lossy(&stderr_bytes).to_string();
-            let (stdout_text, stdout_truncated) =
-                truncate_shell_output(&stdout_raw, max_bytes, max_lines);
-            let (stderr_text, stderr_truncated) =
-                truncate_shell_output(&stderr_raw, max_bytes, max_lines);
-            return json!({
-                "ok": status.success(),
-                "command": command,
-                "cwd": cwd,
-                "stdout": stdout_text,
-                "stderr": stderr_text,
-                "exitCode": status.code(),
-                "durationMs": started.elapsed().as_millis(),
-                "timeoutMs": timeout_ms,
-                "maxBytes": max_bytes,
-                "maxLines": max_lines,
-                "stdoutBytes": stdout_raw.len(),
-                "stderrBytes": stderr_raw.len(),
-                "truncated": stdout_truncated || stderr_truncated,
-                "timedOut": false,
-            });
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let (timed_out, cancelled) = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout_bytes = stdout_task.await.unwrap_or_default();
+                let stderr_bytes = stderr_task.await.unwrap_or_default();
+                let stdout_raw = String::from_utf8_lossy(&stdout_bytes).to_string();
+                let stderr_raw = String::from_utf8_lossy(&stderr_bytes).to_string();
+                let (stdout_text, stdout_truncated) =
+                    truncate_shell_output(&stdout_raw, max_bytes, max_lines);
+                let (stderr_text, stderr_truncated) =
+                    truncate_shell_output(&stderr_raw, max_bytes, max_lines);
+                return json!({
+                    "ok": status.success(),
+                    "command": command,
+                    "cwd": cwd,
+                    "stdout": stdout_text,
+                    "stderr": stderr_text,
+                    "exitCode": status.code(),
+                    "durationMs": started.elapsed().as_millis(),
+                    "timeoutMs": timeout_ms,
+                    "maxBytes": max_bytes,
+                    "maxLines": max_lines,
+                    "stdoutBytes": stdout_raw.len(),
+                    "stderrBytes": stderr_raw.len(),
+                    "truncated": stdout_truncated || stderr_truncated,
+                    "timedOut": false,
+                });
+            }
+            Ok(None) => {
+                if ai_cancel_requested() {
+                    break (false, true);
+                }
+                if Instant::now() >= deadline {
+                    break (true, false);
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+            Err(error) => {
+                return json!({
+                    "ok": false,
+                    "error": format!("wait shell command: {}", error),
+                    "command": command,
+                    "cwd": cwd,
+                    "stdout": "",
+                    "stderr": "",
+                    "exitCode": null,
+                    "durationMs": started.elapsed().as_millis(),
+                    "timeoutMs": timeout_ms,
+                    "truncated": false,
+                    "timedOut": false,
+                });
+            }
         }
-        Ok(Err(error)) => {
-            return json!({
-                "ok": false,
-                "error": format!("wait shell command: {}", error),
-                "command": command,
-                "cwd": cwd,
-                "stdout": "",
-                "stderr": "",
-                "exitCode": null,
-                "durationMs": started.elapsed().as_millis(),
-                "timeoutMs": timeout_ms,
-                "truncated": false,
-                "timedOut": false,
-            });
-        }
-        Err(_) => true,
     };
 
-    if timed_out {
+    if timed_out || cancelled {
         let _ = child.kill().await;
         let stdout_bytes = stdout_task.await.unwrap_or_default();
         let stderr_bytes = stderr_task.await.unwrap_or_default();
@@ -686,7 +916,7 @@ async fn execute_shell_command(args: RunShellCommandArgs) -> Value {
         let (stderr_text, _) = truncate_shell_output(&stderr_raw, max_bytes, max_lines);
         return json!({
             "ok": false,
-            "error": "command timed out",
+            "error": if cancelled { "command cancelled" } else { "command timed out" },
             "command": command,
             "cwd": cwd,
             "stdout": stdout_text,
@@ -699,7 +929,8 @@ async fn execute_shell_command(args: RunShellCommandArgs) -> Value {
             "stdoutBytes": stdout_raw.len(),
             "stderrBytes": stderr_raw.len(),
             "truncated": true,
-            "timedOut": true,
+            "timedOut": timed_out,
+            "cancelled": cancelled,
         });
     }
 
@@ -840,6 +1071,21 @@ fn absolute_path_from_path(path: &Path) -> String {
         .to_string()
 }
 
+fn path_is_under(path: &Path, parent: &Path) -> bool {
+    let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let parent = fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    path.starts_with(parent)
+}
+
+fn is_ai_session_record_path(path: &Path) -> bool {
+    let Some(home_dir) = dirs::home_dir() else {
+        return false;
+    };
+    let claude_records_dir = home_dir.join(".claude").join("projects");
+    let codex_records_dir = home_dir.join(".codex").join("sessions");
+    path_is_under(path, &claude_records_dir) || path_is_under(path, &codex_records_dir)
+}
+
 fn provider_label(provider: SessionProvider) -> &'static str {
     match provider {
         SessionProvider::Claude => "Claude code",
@@ -882,11 +1128,20 @@ fn category_exists(category_id: &str, map: &AiSessionMap) -> Result<(), AiToolEr
 }
 
 fn mapped_session_exists(provider: SessionProvider, session_id: &str) -> bool {
+    mounted_session(provider, session_id).is_ok()
+}
+
+fn mounted_session(provider: SessionProvider, session_id: &str) -> Result<Session, AiToolError> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Err(AiToolError::Failed("sessionId is required".to_string()));
+    }
+
     load_config()
         .workspaces
         .into_iter()
         .filter(|workspace| workspace.provider == provider)
-        .any(|workspace| {
+        .find_map(|workspace| {
             let sessions = match provider {
                 SessionProvider::Claude => crate::session::scan_sessions(&workspace.path),
                 SessionProvider::Codex => {
@@ -894,9 +1149,33 @@ fn mapped_session_exists(provider: SessionProvider, session_id: &str) -> bool {
                 }
             };
             sessions
-                .map(|sessions| sessions.iter().any(|session| session.id == session_id))
-                .unwrap_or(false)
+                .ok()?
+                .into_iter()
+                .find(|session| session.id == session_id)
         })
+        .ok_or_else(|| {
+            AiToolError::Failed(format!(
+                "Session '{}' for provider '{}' is not mounted in Shelf",
+                session_id,
+                provider_key(provider)
+            ))
+        })
+}
+
+fn mounted_session_file(
+    provider: SessionProvider,
+    session_id: &str,
+) -> Result<PathBuf, AiToolError> {
+    let session = mounted_session(provider, session_id)?;
+    let file_path = PathBuf::from(session.file_path);
+    if file_path.as_os_str().is_empty() || !file_path.is_file() {
+        return Err(AiToolError::Failed(format!(
+            "Mounted session '{}' for provider '{}' has no readable record file",
+            session_id,
+            provider_key(provider)
+        )));
+    }
+    Ok(file_path)
 }
 
 fn claude_session_dir(workspace_path: &str) -> PathBuf {
@@ -1041,6 +1320,12 @@ fn read_lines(path: &str) -> Result<Vec<String>, AiToolError> {
         .map(|content| content.lines().map(ToString::to_string).collect())
 }
 
+fn read_record_lines(path: &Path) -> Result<Vec<String>, AiToolError> {
+    fs::read_to_string(path)
+        .map_err(|e| AiToolError::Failed(format!("Read file '{}': {}", path.display(), e)))
+        .map(|content| content.lines().map(ToString::to_string).collect())
+}
+
 fn checked_line_range(
     total_lines: usize,
     start_line: usize,
@@ -1077,6 +1362,73 @@ fn checked_read_line_range(
         )));
     }
     Ok((start, end))
+}
+
+fn validate_session_record_lines(
+    provider: SessionProvider,
+    lines: &[String],
+) -> Result<(), AiToolError> {
+    if lines.is_empty() {
+        return Err(AiToolError::Failed(
+            "Session record cannot be empty".to_string(),
+        ));
+    }
+
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        serde_json::from_str::<Value>(line).map_err(|e| {
+            AiToolError::Failed(format!(
+                "Replacement would make {} JSONL invalid at line {}: {}",
+                provider_label(provider),
+                index + 1,
+                e
+            ))
+        })?;
+    }
+
+    Ok(())
+}
+
+fn replace_session_record_lines(
+    provider: SessionProvider,
+    session_id: &str,
+    start_line: usize,
+    end_line: usize,
+    replacement: &str,
+) -> Result<Value, AiToolError> {
+    let file_path = mounted_session_file(provider, session_id)?;
+    let original = fs::read_to_string(&file_path)
+        .map_err(|e| AiToolError::Failed(format!("Read file '{}': {}", file_path.display(), e)))?;
+    let had_trailing_newline = original.ends_with('\n');
+    let mut lines = original
+        .lines()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let (start, end) = checked_line_range(lines.len(), start_line, end_line)?;
+    let replacement_lines = replacement
+        .lines()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    lines.splice(start..end, replacement_lines);
+    validate_session_record_lines(provider, &lines)?;
+
+    let mut content = lines.join("\n");
+    if had_trailing_newline {
+        content.push('\n');
+    }
+    fs::write(&file_path, content)
+        .map_err(|e| AiToolError::Failed(format!("Write file '{}': {}", file_path.display(), e)))?;
+
+    Ok(limited_json_output(json!({
+        "ok": true,
+        "provider": provider,
+        "sessionId": session_id,
+        "filePath": absolute_path_from_path(&file_path),
+        "startLine": start_line,
+        "endLine": end_line,
+    })))
 }
 
 fn ai_history_to_messages(history: Vec<AiHistoryMessage>) -> Vec<Message> {
@@ -1327,6 +1679,12 @@ impl Tool for ReplaceFileLinesTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        if is_ai_session_record_path(Path::new(&args.file_path)) {
+            return Err(AiToolError::Failed(
+                "Use replace_session_record_lines with provider + sessionId to edit session records"
+                    .to_string(),
+            ));
+        }
         let original = fs::read_to_string(&args.file_path)
             .map_err(|e| AiToolError::Failed(format!("Read file '{}': {}", args.file_path, e)))?;
         let had_trailing_newline = original.ends_with('\n');
@@ -1353,6 +1711,96 @@ impl Tool for ReplaceFileLinesTool {
             "startLine": args.start_line,
             "endLine": args.end_line,
         })))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ReadSessionRecordLinesTool;
+
+impl Tool for ReadSessionRecordLinesTool {
+    const NAME: &'static str = "read_session_record_lines";
+    type Error = AiToolError;
+    type Args = ReadSessionRecordLinesArgs;
+    type Output = Value;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Read a mounted Claude/Codex session record by provider + sessionId and 1-based inclusive line range. This only reads sessions currently reachable from Shelf-mounted workspaces.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "provider": { "type": "string", "enum": ["claude", "codex"] },
+                    "sessionId": { "type": "string" },
+                    "startLine": { "type": "integer", "minimum": 1 },
+                    "endLine": { "type": "integer", "minimum": 1 }
+                },
+                "required": ["provider", "sessionId", "startLine", "endLine"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let file_path = mounted_session_file(args.provider, &args.session_id)?;
+        let lines = read_record_lines(&file_path)?;
+        let (start, end) = checked_read_line_range(lines.len(), args.start_line, args.end_line)?;
+        let selected = lines[start..end]
+            .iter()
+            .enumerate()
+            .map(|(index, text)| {
+                json!({
+                    "line": args.start_line + index,
+                    "text": text,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(limited_json_output(json!({
+            "provider": args.provider,
+            "sessionId": args.session_id,
+            "filePath": absolute_path_from_path(&file_path),
+            "startLine": args.start_line,
+            "endLine": args.end_line,
+            "maxLinesPerRead": AI_MAX_READ_FILE_LINES,
+            "lines": selected,
+        })))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ReplaceSessionRecordLinesTool;
+
+impl Tool for ReplaceSessionRecordLinesTool {
+    const NAME: &'static str = "replace_session_record_lines";
+    type Error = AiToolError;
+    type Args = ReplaceSessionRecordLinesArgs;
+    type Output = Value;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Replace a mounted Claude/Codex session record's 1-based inclusive line range by provider + sessionId. This directly edits the original conversation record, only for sessions currently reachable from Shelf-mounted workspaces. Replacement is rejected if it would make the JSONL record invalid.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "provider": { "type": "string", "enum": ["claude", "codex"] },
+                    "sessionId": { "type": "string" },
+                    "startLine": { "type": "integer", "minimum": 1 },
+                    "endLine": { "type": "integer", "minimum": 1 },
+                    "replacement": { "type": "string", "description": "Replacement text. Each non-empty replacement line must be valid JSONL." }
+                },
+                "required": ["provider", "sessionId", "startLine", "endLine", "replacement"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        replace_session_record_lines(
+            args.provider,
+            &args.session_id,
+            args.start_line,
+            args.end_line,
+            &args.replacement,
+        )
     }
 }
 
@@ -1693,6 +2141,12 @@ where
         let id = _internal_call_id.to_string();
         let args = _args.to_string();
         async move {
+            if ai_cancel_requested() {
+                return ToolCallHookAction::terminate(format!(
+                    "{}user requested stop",
+                    AI_CANCELLED_PREFIX
+                ));
+            }
             emit_ai_event(&app, "tool-start", Some(id), Some(args), Some(tool));
             if tool_name == SHELL_TOOL_NAME {
                 let shell_args = shell_args_from_json(_args);
@@ -1731,8 +2185,28 @@ where
         let id = _internal_call_id.to_string();
         let result = result.to_string();
         async move {
+            if ai_cancel_requested() {
+                return HookAction::terminate(format!(
+                    "{}user requested stop",
+                    AI_CANCELLED_PREFIX
+                ));
+            }
             emit_ai_event(&app, "tool-end", Some(id), Some(result), Some(tool));
             HookAction::cont()
+        }
+    }
+
+    fn on_text_delta(
+        &self,
+        _text_delta: &str,
+        _aggregated_text: &str,
+    ) -> impl Future<Output = HookAction> + Send {
+        async move {
+            if ai_cancel_requested() {
+                HookAction::terminate(format!("{}user requested stop", AI_CANCELLED_PREFIX))
+            } else {
+                HookAction::cont()
+            }
         }
     }
 }
@@ -1766,6 +2240,12 @@ pub fn get_ai_session_map() -> AiResult<AiSessionMap> {
 #[tauri::command]
 pub fn save_ai_session_map(map: AiSessionMap) -> AiResult<()> {
     save_ai_map(&map)
+}
+
+#[tauri::command]
+pub fn stop_ai_organizer() -> AiResult<()> {
+    AI_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1805,6 +2285,7 @@ pub async fn list_ai_models(settings: Option<AiSettings>) -> AiResult<AiModelLis
 
 #[tauri::command]
 pub async fn run_ai_organizer(app: AppHandle, request: AiRunRequest) -> AiResult<AiRunResponse> {
+    AI_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
     let settings = load_ai_settings();
     if settings.base_url.trim().is_empty()
         || settings.api_key.trim().is_empty()
@@ -1833,6 +2314,8 @@ pub async fn run_ai_organizer(app: AppHandle, request: AiRunRequest) -> AiResult
         .tool(SearchSessionRecordsTool)
         .tool(ReadFileLinesTool)
         .tool(ReplaceFileLinesTool)
+        .tool(ReadSessionRecordLinesTool)
+        .tool(ReplaceSessionRecordLinesTool)
         .tool(ListAiOrganizationTool)
         .tool(CreateAiCategoryTool)
         .tool(RenameAiCategoryTool)
@@ -1883,6 +2366,9 @@ pub async fn run_ai_organizer(app: AppHandle, request: AiRunRequest) -> AiResult
             Ok(_) => {}
             Err(error) => {
                 let message = error.to_string();
+                if message.contains(AI_CANCELLED_PREFIX) {
+                    return Err(message);
+                }
                 if message.contains(SHELL_APPROVAL_PREFIX) {
                     return Err(message);
                 }
@@ -1897,4 +2383,143 @@ pub async fn run_ai_organizer(app: AppHandle, request: AiRunRequest) -> AiResult
         message,
         map: load_ai_map(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unix_shell_risk_only_flags_rm_commands() {
+        let platform = ShellRiskPlatform::UnixLike;
+
+        assert!(is_risky_shell_command_for_platform("rm file.txt", platform));
+        assert!(is_risky_shell_command_for_platform("rm -rf dist", platform));
+        assert!(is_risky_shell_command_for_platform(
+            "sudo rm -fr /tmp/demo",
+            platform
+        ));
+        assert!(is_risky_shell_command_for_platform(
+            "cd demo && rm -r build",
+            platform
+        ));
+        assert!(is_risky_shell_command_for_platform(
+            "bash -c 'rm -rf build'",
+            platform
+        ));
+
+        assert!(!is_risky_shell_command_for_platform(
+            "git reset --hard",
+            platform
+        ));
+        assert!(!is_risky_shell_command_for_platform(
+            "chmod -R 755 dist",
+            platform
+        ));
+        assert!(!is_risky_shell_command_for_platform("mv old new", platform));
+        assert!(!is_risky_shell_command_for_platform("cp a b", platform));
+        assert!(!is_risky_shell_command_for_platform("echo rm", platform));
+    }
+
+    #[test]
+    fn windows_shell_risk_flags_cmd_and_powershell_delete_commands() {
+        let platform = ShellRiskPlatform::Windows;
+
+        assert!(is_risky_shell_command_for_platform(
+            "del /s /q build",
+            platform
+        ));
+        assert!(is_risky_shell_command_for_platform(
+            "rmdir /s /q dist",
+            platform
+        ));
+        assert!(is_risky_shell_command_for_platform(
+            "cmd /c del /s /q build",
+            platform
+        ));
+        assert!(is_risky_shell_command_for_platform(
+            "powershell -Command \"Remove-Item -Recurse -Force dist\"",
+            platform
+        ));
+        assert!(is_risky_shell_command_for_platform(
+            "pwsh -c 'rm -Recurse -Force dist'",
+            platform
+        ));
+
+        assert!(!is_risky_shell_command_for_platform(
+            "git reset --hard",
+            platform
+        ));
+        assert!(!is_risky_shell_command_for_platform(
+            "chmod -R 755 dist",
+            platform
+        ));
+        assert!(!is_risky_shell_command_for_platform(
+            "move old new",
+            platform
+        ));
+        assert!(!is_risky_shell_command_for_platform("echo del", platform));
+    }
+
+    #[test]
+    fn explicit_windows_shells_are_detected_on_unix_hosts() {
+        let platform = ShellRiskPlatform::UnixLike;
+
+        assert!(is_risky_shell_command_for_platform(
+            "cmd /c rmdir /s /q dist",
+            platform
+        ));
+        assert!(is_risky_shell_command_for_platform(
+            "powershell -Command \"Remove-Item -Recurse -Force dist\"",
+            platform
+        ));
+    }
+
+    #[test]
+    fn session_record_validation_accepts_valid_claude_jsonl_only() {
+        let valid = vec![
+            r#"{"type":"user","sessionId":"s1","message":{"role":"user","content":"hello"}}"#
+                .to_string(),
+            r#"{"type":"assistant","sessionId":"s1","message":{"role":"assistant","content":"ok"}}"#
+                .to_string(),
+        ];
+        assert!(validate_session_record_lines(SessionProvider::Claude, &valid).is_ok());
+
+        let invalid = vec![
+            r#"{"type":"user","sessionId":"s1"}"#.to_string(),
+            r#"{"type":"assistant","sessionId":"s1""#.to_string(),
+        ];
+        assert!(validate_session_record_lines(SessionProvider::Claude, &invalid).is_err());
+    }
+
+    #[test]
+    fn session_record_validation_accepts_valid_codex_json_only() {
+        let valid = vec![
+            r#"{"type":"session_meta","id":"s1"}"#.to_string(),
+            r#"{"type":"response_item","payload":{"type":"message","role":"user"}}"#.to_string(),
+        ];
+        assert!(validate_session_record_lines(SessionProvider::Codex, &valid).is_ok());
+
+        let invalid = vec![
+            r#"{"type":"session_meta","id":"s1"}"#.to_string(),
+            r#"{"type":"response_item""#.to_string(),
+        ];
+        assert!(validate_session_record_lines(SessionProvider::Codex, &invalid).is_err());
+    }
+
+    #[test]
+    fn ai_session_record_path_detects_known_record_dirs() {
+        let Some(home_dir) = dirs::home_dir() else {
+            return;
+        };
+        assert!(is_ai_session_record_path(
+            &home_dir.join(".claude/projects/demo/session.jsonl")
+        ));
+        assert!(is_ai_session_record_path(
+            &home_dir.join(".codex/sessions/2026/01/01/rollout.jsonl")
+        ));
+        assert!(!is_ai_session_record_path(
+            &home_dir.join("Desktop/project/demo.jsonl")
+        ));
+    }
 }
