@@ -1,6 +1,9 @@
 use std::{
     collections::BTreeMap,
+    env,
     ffi::OsString,
+    fs,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU32, Ordering},
         Arc, Mutex,
@@ -24,6 +27,109 @@ struct PtySession {
     reader: Mutex<Box<dyn std::io::Read + Send>>,
     reader_closed: AtomicBool,
     child_exited: AtomicBool,
+}
+
+fn is_path_env_key(key: &str) -> bool {
+    if cfg!(target_os = "windows") {
+        key.eq_ignore_ascii_case("PATH")
+    } else {
+        key == "PATH"
+    }
+}
+
+fn push_path_if_dir(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if path.is_dir() {
+        paths.push(path);
+    }
+}
+
+fn collect_node_bin_dirs(root: &Path, paths: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let bin = path.join("bin");
+        if bin.join("node").is_file() {
+            paths.push(bin);
+        }
+        collect_node_bin_dirs(&path, paths);
+    }
+}
+
+fn inherited_path(env_overrides: &BTreeMap<String, String>) -> Option<OsString> {
+    env_overrides
+        .iter()
+        .find(|(key, _)| is_path_env_key(key))
+        .map(|(_, value)| OsString::from(value))
+        .or_else(|| env::var_os("PATH"))
+}
+
+fn pty_spawn_path(file: &str, env_overrides: &BTreeMap<String, String>) -> Option<OsString> {
+    let base_path = inherited_path(env_overrides);
+    let mut paths = Vec::new();
+
+    if let Some(parent) = Path::new(file)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        push_path_if_dir(&mut paths, parent.to_path_buf());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        for path in [
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ] {
+            push_path_if_dir(&mut paths, PathBuf::from(path));
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        for path in [
+            home.join(".local/bin"),
+            home.join("bin"),
+            home.join(".cargo/bin"),
+            home.join(".volta/bin"),
+            home.join(".asdf/shims"),
+            home.join(".bun/bin"),
+            home.join(".npm-global/bin"),
+            home.join("Library/pnpm"),
+            home.join(".fnm/current/bin"),
+        ] {
+            push_path_if_dir(&mut paths, path);
+        }
+        collect_node_bin_dirs(&home.join(".nvm/versions/node"), &mut paths);
+        collect_node_bin_dirs(&home.join(".fnm/node-versions"), &mut paths);
+        collect_node_bin_dirs(
+            &home.join("Library/Application Support/fnm/node-versions"),
+            &mut paths,
+        );
+    }
+
+    if let Some(base_path) = base_path {
+        paths.extend(env::split_paths(&base_path));
+    }
+
+    let mut deduped = Vec::new();
+    for path in paths {
+        if !deduped.iter().any(|item: &PathBuf| item == &path) {
+            deduped.push(path);
+        }
+    }
+
+    env::join_paths(deduped).ok()
 }
 
 async fn remove_session_if_done(
@@ -74,12 +180,20 @@ pub async fn pty_spawn<R: Runtime>(
         .filter(|value| !value.is_empty() && value != "Terminal")
         .unwrap_or_else(|| "xterm-256color".to_string());
 
+    let env_remove = env_remove.unwrap_or_default();
+    let remove_path = env_remove.iter().any(|key| is_path_env_key(key));
+    let path_env = if remove_path {
+        None
+    } else {
+        pty_spawn_path(&file, &env)
+    };
+
     let mut cmd = CommandBuilder::new(file);
     cmd.args(args);
     if let Some(cwd) = cwd {
         cmd.cwd(OsString::from(cwd));
     }
-    if let Some(env_remove) = env_remove {
+    if !env_remove.is_empty() {
         for key in env_remove {
             if !key.trim().is_empty() {
                 cmd.env_remove(OsString::from(key));
@@ -90,7 +204,13 @@ pub async fn pty_spawn<R: Runtime>(
     cmd.env(OsString::from("COLORTERM"), OsString::from("truecolor"));
     cmd.env(OsString::from("TERM_PROGRAM"), OsString::from("Shelf"));
     for (k, v) in env.iter() {
+        if is_path_env_key(k) {
+            continue;
+        }
         cmd.env(OsString::from(k), OsString::from(v));
+    }
+    if let Some(path) = path_env {
+        cmd.env(OsString::from("PATH"), path);
     }
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     let child_killer = child.clone_killer();
