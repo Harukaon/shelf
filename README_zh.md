@@ -60,7 +60,7 @@ npm run tauri build
 
 ## 友情链接
 
-- [LINUX DO](https://linux.do/) — 一个友好的 Linux、编程和技术爱好者社区。
+- [LINUX DO](https://linux.do/)
 
 ## 许可证
 

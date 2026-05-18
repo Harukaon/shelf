@@ -66,7 +66,7 @@ npm run tauri build
 
 ## Friends
 
-- [LINUX DO](https://linux.do/) — A friendly community for Linux, programming, and tech enthusiasts.
+- [LINUX DO](https://linux.do/)
 
 ## License
 
