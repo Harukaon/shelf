@@ -2,7 +2,7 @@
 
 > [English](README.md)
 
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) 的桌面工作区管理器 —— 在一个窗口中管理项目、浏览和恢复对话。
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) 与 [Codex](https://github.com/openai/codex) 的桌面工作区管理器 —— 在一个窗口中管理项目、浏览和恢复对话。
 
 ## 为什么需要 Shelf？
 
@@ -17,25 +17,24 @@ Shelf 为 Claude Code 加上了一层图形界面：
 
 ## 功能
 
-- **工作区管理** — 添加/移除项目文件夹，自动发现对话
-- **对话浏览** — 列表、恢复、重命名、删除、置顶 Claude Code 对话
+- **工作区管理** — 添加/移除项目文件夹，自动发现 Claude Code 与 Codex 对话
+- **对话浏览** — 列表、恢复、重命名、删除、置顶 Claude Code 与 Codex 对话
+- **AI 对话自动整理** — 一键扫描并智能归类本地 AI 对话历史
+- **重启现场恢复** — 退出后自动保存所有工作区、会话列表及侧边栏状态，重启后瞬间回到上次离开的位置
 - **内嵌终端** — xterm.js + 真实 PTY，标签页可拖拽排序
 - **文件树** — 浏览工作区文件，拖拽文件到终端
 - **面板缩放** — 拖拽调整侧边栏和文件树宽度
 - **深色主题** — One Dark 风格终端配色
 - **中英文双语** — 支持中文和英文界面
-- **跨平台** — macOS（Apple Silicon）和 Windows
+- **跨平台** — macOS（Apple Silicon）和 Linux
 
 ## 安装
 
-从 [Releases](https://github.com/Harukaon/shelf/releases) 页面下载最新版本：
-
-- macOS：`.dmg` 文件
-- Windows：`.exe` 或 `.msi` 文件
+从 [Releases](https://github.com/Harukaon/shelf/releases) 页面下载最新 macOS `.dmg` 文件。
 
 ## 依赖
 
-- 已安装 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI 并添加到 PATH
+- 已安装 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 或 [Codex](https://github.com/openai/codex) CLI 并添加到 PATH
 
 ## 开发
 

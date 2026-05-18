@@ -2,7 +2,7 @@
 
 > [中文文档](README_zh.md)
 
-A desktop workspace manager for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — organize your projects, browse and resume sessions, all in one window.
+A desktop workspace manager for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [Codex](https://github.com/openai/codex) — organize your projects, browse and resume sessions, all in one window.
 
 ## Why Shelf?
 
@@ -24,21 +24,23 @@ Shelf wraps Claude Code with a clean GUI:
 ## Features
 
 - **Workspace management** — add/remove project folders, auto-discover sessions
-- **Session browser** — list, resume, rename, delete, and pin Claude Code sessions
+- **Session browser** — list, resume, rename, delete, and pin Claude Code and Codex sessions
+- **AI session organizer** — one-click scan and auto-categorize local AI conversation history
+- **Restart recovery** — restores all workspaces, sessions, and sidebar state after reopening
 - **Embedded terminals** — xterm.js + real PTY, tabbed and reorderable via drag-and-drop
 - **File tree** — browse workspace files, drag files into the terminal
 - **Resizable panels** — drag to resize sidebar and file tree
 - **Dark theme** — One Dark-inspired terminal color scheme
 - **i18n** — English and Chinese
-- **Cross-platform** — macOS (Apple Silicon) and Windows
+- **Cross-platform** — macOS (Apple Silicon) and Linux
 
 ## Install
 
-Download the latest `.dmg` (macOS) or `.exe` / `.msi` (Windows) from [Releases](https://github.com/Harukaon/shelf/releases).
+Download the latest `.dmg` from [Releases](https://github.com/Harukaon/shelf/releases) for macOS.
 
 ## Requirements
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed and accessible in your PATH
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex) CLI installed and accessible in your PATH
 
 ## Development
 
