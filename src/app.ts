@@ -1,16 +1,13 @@
 import "@xterm/xterm/css/xterm.css";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
 import { tauriInvoke, refreshIcons } from "./helpers";
 import { Session, TabInfo, SessionProvider, AiSessionMap, AiHistoryMessage, AiGroup, ShellCommandApproval } from "./types";
 import { TabManager } from "./modules/tabs";
 import { WorkspaceManager } from "./modules/workspace";
-import { applyTerminalTheme, createTerminalTab, repaintTerminal, scheduleTerminalRefit, setTerminalThemeMode, type TerminalThemeMode } from "./modules/terminal";
+import { applyTerminalTheme, scheduleTerminalRefit, setTerminalThemeMode, type TerminalThemeMode } from "./modules/terminal";
 import { setupFileTreeContextMenu } from "./modules/files";
 import { setupDragDrop, setupPanelResize } from "./modules/dragdrop";
 import { t, setLang, getLang } from "./i18n";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import Sortable from "sortablejs";
 import { showContextMenu } from "./modules/context-menu";
@@ -19,7 +16,9 @@ import * as settingsPanel from "./modules/settings-panel";
 import * as aiWindow from "./modules/ai-window";
 import * as sessionActions from "./modules/session-actions";
 import * as workspaceView from "./modules/workspace-view";
+import * as appState from "./modules/app-state";
 import type { AiToolMessage } from "./modules/ai-window";
+import type { SavedAppState, SavedTabState, SavedWindowState } from "./modules/app-state";
 
 type PendingSessionTab = {
   workspacePath: string;
@@ -32,34 +31,6 @@ type PendingSessionTab = {
 };
 
 type ResizeDirection = "East" | "North" | "NorthEast" | "NorthWest" | "South" | "SouthEast" | "SouthWest" | "West";
-
-type SavedWindowState = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  maximized?: boolean;
-};
-
-type SavedTabState = {
-  id: string;
-  kind: "terminal" | "session" | "new-session";
-  title: string;
-  cwd?: string;
-  workspacePath?: string;
-  sessionProvider?: SessionProvider;
-  sessionId?: string;
-  shell?: string;
-};
-
-type SavedAppState = {
-  version: 1;
-  activeTabId?: string;
-  selectedWorkspace?: string | null;
-  selectedProvider?: SessionProvider | null;
-  window?: SavedWindowState;
-  tabs: SavedTabState[];
-};
 
 
 class App {
@@ -234,33 +205,6 @@ class App {
     return session.display_title;
   }
 
-  private async _loadSavedAppState() {
-    try {
-      const state = await tauriInvoke<Partial<SavedAppState>>("get_app_state");
-      if (state?.version === 1 && Array.isArray(state.tabs)) {
-        this.restoredState = state as SavedAppState;
-      }
-    } catch (e) {
-      console.warn("[Shelf] app state not available:", e);
-    }
-  }
-
-  private async _restoreWindowState() {
-    const state = this.restoredState?.window;
-    if (!state) return;
-
-    try {
-      const win = getCurrentWebviewWindow();
-      if (state.width > 0 && state.height > 0) {
-        await win.setSize(new PhysicalSize(state.width, state.height));
-      }
-      await win.setPosition(new PhysicalPosition(state.x, state.y));
-      if (state.maximized) await win.maximize();
-    } catch (e) {
-      console.warn("[Shelf] restore window state failed:", e);
-    }
-  }
-
   private _createStartTab() {
     const previousActiveId = this.tabs.activeId;
     const shouldActivateStart = !previousActiveId || previousActiveId === START_TAB_ID;
@@ -284,13 +228,13 @@ class App {
       </div>`;
     this.terminalContainer.appendChild(container);
 
-    const tab: TabInfo = {
+    const tab = {
       id: START_TAB_ID, title: t("tab.home"), closable: false,
-      terminal: null as unknown as Terminal,
-      fitAddon: null as unknown as FitAddon,
+      terminal: null,
+      fitAddon: null,
       containerEl: container,
       active: shouldActivateStart,
-    };
+    } as unknown as TabInfo;
     this.tabs.tabsMap.set(START_TAB_ID, tab);
     if (shouldActivateStart) this.tabs.setInitActiveTab(START_TAB_ID);
     this._renderTabs();
@@ -571,183 +515,23 @@ class App {
     this.focusedSessionId = activeTab?.sessionId || null;
   }
 
-  private _buildAppState(windowState?: SavedWindowState): SavedAppState {
-    const tabs: SavedTabState[] = [];
-    for (const tabId of this.tabs.getTabOrder()) {
-      const tab = this.tabs.tabsMap.get(tabId);
-      if (!tab || !tab.closable || tabId === START_TAB_ID) continue;
+  private async _loadSavedAppState() { return appState._loadSavedAppState(this); }
 
-      const kind = tab.sessionId ? "session" : tab.restoreKind || "terminal";
-      if (kind === "terminal") continue;
-      if (kind === "session" && (!tab.sessionId || !tab.sessionProvider)) continue;
-      if (kind === "new-session" && (!tab.sessionProvider || !tab.workspacePath)) continue;
+  private async _restoreWindowState() { return appState._restoreWindowState(this); }
 
-      tabs.push({
-        id: tab.id,
-        kind,
-        title: tab.title,
-        cwd: tab.cwd,
-        workspacePath: tab.workspacePath,
-        sessionProvider: tab.sessionProvider,
-        sessionId: tab.sessionId,
-        shell: tab.shell,
-      });
-    }
+  private _buildAppState(windowState?: SavedWindowState): SavedAppState { return appState._buildAppState(this, windowState); }
 
-    return {
-      version: 1,
-      activeTabId: this.tabs.activeId || undefined,
-      selectedWorkspace: this.selectedWorkspace,
-      selectedProvider: this.ws.selectedProvider,
-      window: windowState,
-      tabs,
-    };
-  }
+  private async _readWindowState(): Promise<SavedWindowState | undefined> { return appState._readWindowState(this); }
 
-  private async _readWindowState(): Promise<SavedWindowState | undefined> {
-    try {
-      const win = getCurrentWebviewWindow();
-      const [position, size, maximized] = await Promise.all([
-        win.outerPosition(),
-        win.outerSize(),
-        win.isMaximized(),
-      ]);
-      return {
-        x: Math.round(position.x),
-        y: Math.round(position.y),
-        width: Math.round(size.width),
-        height: Math.round(size.height),
-        maximized,
-      };
-    } catch (e) {
-      console.warn("[Shelf] read window state failed:", e);
-      return undefined;
-    }
-  }
+  private async _saveAppStateNow() { return appState._saveAppStateNow(this); }
 
-  private async _saveAppStateNow() {
-    if (!this.appStateReady || this.restoreInProgress) return;
-    const state = this._buildAppState(await this._readWindowState() || this.restoredState?.window);
-    try {
-      await tauriInvoke("save_app_state", { state });
-      this.restoredState = state;
-    } catch (e) {
-      console.warn("[Shelf] save app state failed:", e);
-    }
-  }
+  private _scheduleSaveAppState(delay = 300) { return appState._scheduleSaveAppState(this, delay); }
 
-  private _scheduleSaveAppState(delay = 300) {
-    if (!this.appStateReady || this.restoreInProgress) return;
-    if (this.saveStateTimer) clearTimeout(this.saveStateTimer);
-    this.saveStateTimer = setTimeout(() => {
-      this.saveStateTimer = null;
-      this._saveAppStateNow();
-    }, delay);
-  }
+  private _setupWindowStateTracking() { return appState._setupWindowStateTracking(this); }
 
-  private _setupWindowStateTracking() {
-    const win = getCurrentWebviewWindow();
-    win.onMoved(() => this._scheduleSaveAppState()).catch((e) => console.warn("[Shelf] window move tracking failed:", e));
-    win.onResized(() => {
-      const tab = this.tabs.getActiveTab();
-      if (tab) scheduleTerminalRefit(tab);
-      this._scheduleSaveAppState();
-    }).catch((e) => console.warn("[Shelf] window resize tracking failed:", e));
-  }
+  private async _restoreSavedTabs() { return appState._restoreSavedTabs(this); }
 
-  private async _restoreSavedTabs() {
-    const state = this.restoredState;
-    if (!state || state.tabs.length === 0) {
-      this._scheduleSaveAppState();
-      return;
-    }
-
-    this.restoreInProgress = true;
-    try {
-      for (const saved of state.tabs) {
-        if (this.tabs.tabsMap.has(saved.id) || saved.id === START_TAB_ID) continue;
-        const tab = this._createRestoredTab(saved);
-        if (tab) this.tabs.addTab(tab, false);
-      }
-
-      if (this.tabs.getTabOrder().some((id) => id !== START_TAB_ID)) {
-        const start = this.tabs.tabsMap.get(START_TAB_ID);
-        if (start) {
-          start.containerEl.style.visibility = "hidden";
-          start.containerEl.style.pointerEvents = "none";
-          start.active = false;
-        }
-      }
-
-      const restoredTabIds = this.tabs.getTabOrder().filter((id) => id !== START_TAB_ID);
-      const activeId = state.activeTabId && state.activeTabId !== START_TAB_ID && this.tabs.tabsMap.has(state.activeTabId)
-        ? state.activeTabId
-        : restoredTabIds[0];
-      if (activeId) {
-        this.tabs.activateTab(activeId);
-      } else {
-        this._showStartPage();
-      }
-
-      this.selectedWorkspace = state.selectedWorkspace || this.tabs.getActiveTab()?.workspacePath || null;
-      this.ws.selectedWorkspace = this.selectedWorkspace;
-      this.ws.selectedProvider = state.selectedProvider || this.tabs.getActiveTab()?.sessionProvider || null;
-    } finally {
-      this.restoreInProgress = false;
-      this._syncActiveSessionIds();
-      this._syncFocusedSessionId();
-      this._renderTabs();
-      this._renderWorkspaces();
-      this._scheduleSaveAppState();
-    }
-  }
-
-  private _createRestoredTab(saved: SavedTabState): TabInfo | null {
-    if (saved.kind === "session") {
-      if (!saved.sessionId || !saved.sessionProvider || !saved.workspacePath) return null;
-      const session = this.ws.getSessions(saved.workspacePath, saved.sessionProvider)
-        .find((item) => item.id === saved.sessionId);
-      if (!session) return null;
-      const cwd = session.cwd || saved.cwd || saved.workspacePath;
-      const command = session.provider === "codex"
-        ? { bin: this.codexPath, args: ["resume", session.id, "-C", cwd] }
-        : { bin: this.claudePath, args: ["--resume", session.id] };
-      return createTerminalTab(saved.id, this._displayTitleForSession(session) || saved.title, this.terminalContainer,
-        (id, data) => this._writePty(id, data),
-        { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command },
-      );
-    }
-
-    if (saved.kind === "new-session") {
-      if (!saved.sessionProvider || !saved.workspacePath) return null;
-      const command = saved.sessionProvider === "codex"
-        ? { bin: this.codexPath, args: ["-C", saved.workspacePath] }
-        : { bin: this.claudePath, args: [] };
-      const title = saved.title || (saved.sessionProvider === "codex" ? t("tab.codex_new") : t("tab.claude_new"));
-      const tab = createTerminalTab(saved.id, title, this.terminalContainer,
-        (id, data) => this._writePty(id, data),
-        { cwd: saved.workspacePath, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, command },
-      );
-      this.pendingSessionTabs.set(saved.id, {
-        workspacePath: saved.workspacePath,
-        provider: saved.sessionProvider,
-        baselineIds: new Set(this.ws.getSessions(saved.workspacePath, saved.sessionProvider).map((session) => session.id)),
-        startedAt: Date.now(),
-      });
-      this._schedulePendingSessionPoll(saved.id);
-      return tab;
-    }
-
-    return createTerminalTab(saved.id, saved.title || t("tab.terminal"), this.terminalContainer,
-      (id, data) => this._writePty(id, data),
-      {
-        cwd: saved.cwd,
-        workspacePath: saved.workspacePath,
-        sessionProvider: saved.sessionProvider,
-        shell: saved.shell || this.shellSetting,
-      },
-    );
-  }
+  private _createRestoredTab(saved: SavedTabState): TabInfo | null { return appState._createRestoredTab(this, saved); }
 
   private async _showSettings() { return settingsPanel._showSettings(this, APP_THEMES); }
 
