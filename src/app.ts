@@ -801,6 +801,13 @@ class App {
       <div class="settings-section-title">${t("settings.ai_title")}</div>
       <div class="settings-note">${t("settings.ai_help")}</div>
       <div class="settings-row stacked">
+        <label for="settings-ai-endpoint">${t("settings.ai_endpoint")}</label>
+        <select id="settings-ai-endpoint">
+          <option value="openAi">${t("settings.ai_endpoint_openai")}</option>
+          <option value="claude">${t("settings.ai_endpoint_claude")}</option>
+        </select>
+      </div>
+      <div class="settings-row stacked">
         <label for="settings-ai-base-url">${t("settings.ai_base_url")}</label>
         <input id="settings-ai-base-url" placeholder="https://api.openai.com/v1">
       </div>
@@ -845,6 +852,7 @@ class App {
       langSel.value = getLang();
       const themeSel = panel.querySelector("#settings-theme") as HTMLSelectElement;
       themeSel.value = this.theme;
+      (panel.querySelector("#settings-ai-endpoint") as HTMLSelectElement).value = aiSettings.endpoint || "openAi";
       (panel.querySelector("#settings-ai-base-url") as HTMLInputElement).value = aiSettings.baseUrl || "";
       (panel.querySelector("#settings-ai-api-key") as HTMLInputElement).value = aiSettings.apiKey || "";
       (panel.querySelector("#settings-ai-model") as HTMLInputElement).value = aiSettings.model || "";
@@ -862,6 +870,7 @@ class App {
       setLang(newLang);
       this._setTheme(newTheme);
       const aiSettings: AiSettings = {
+        endpoint: ((panel.querySelector("#settings-ai-endpoint") as HTMLSelectElement).value === "claude") ? "claude" : "openAi",
         baseUrl: (panel.querySelector("#settings-ai-base-url") as HTMLInputElement).value.trim(),
         apiKey: (panel.querySelector("#settings-ai-api-key") as HTMLInputElement).value.trim(),
         model: (panel.querySelector("#settings-ai-model") as HTMLInputElement).value.trim(),
@@ -890,6 +899,7 @@ class App {
     if (!status || !list || !loadButton) return;
 
     const settings: AiSettings = {
+      endpoint: ((panel.querySelector("#settings-ai-endpoint") as HTMLSelectElement).value === "claude") ? "claude" : "openAi",
       baseUrl: (panel.querySelector("#settings-ai-base-url") as HTMLInputElement).value.trim(),
       apiKey: (panel.querySelector("#settings-ai-api-key") as HTMLInputElement).value.trim(),
       model: (panel.querySelector("#settings-ai-model") as HTMLInputElement).value.trim(),

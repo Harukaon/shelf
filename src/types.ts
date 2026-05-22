@@ -54,6 +54,7 @@ export interface TabInfo {
 }
 
 export interface AiSettings {
+  endpoint: "openAi" | "claude";
   baseUrl: string;
   apiKey: string;
   model: string;

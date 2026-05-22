@@ -2,11 +2,11 @@ use crate::session::{Session, SessionProvider, ShelfConfig, Workspace};
 use futures_util::StreamExt;
 use rig_core::{
     agent::{HookAction, MultiTurnStreamItem, PromptHook, ToolCallHookAction},
-    completion::{CompletionModel, ToolDefinition},
+    completion::{CompletionModel, GetTokenUsage, ToolDefinition},
     http_client::ReqwestClient,
     message::{Message, ToolChoice, ToolResultContent},
-    prelude::CompletionClient,
-    providers::openai,
+    prelude::{CompletionClient, ModelListingClient},
+    providers::{anthropic, openai},
     streaming::{StreamedAssistantContent, StreamedUserContent, StreamingPrompt},
     tool::Tool,
 };
@@ -44,6 +44,7 @@ const SHELL_MAX_OUTPUT_BYTES: usize = 100_000;
 const SHELL_DEFAULT_MAX_LINES: usize = 500;
 const SHELL_MAX_OUTPUT_LINES: usize = 2_000;
 const AI_CANCELLED_PREFIX: &str = "SHELF_AI_CANCELLED:";
+const CLAUDE_DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 static AI_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
 const AI_ORGANIZER_PREAMBLE: &str = r#"
 You are Shelf's AI session organizer.
@@ -66,9 +67,18 @@ enum AiToolError {
     Failed(String),
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum AiEndpoint {
+    #[default]
+    OpenAi,
+    Claude,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AiSettings {
+    pub endpoint: AiEndpoint,
     pub base_url: String,
     pub api_key: String,
     pub model: String,
@@ -393,12 +403,30 @@ fn ai_model_base_url_candidates(base_url: &str) -> Vec<String> {
     candidates
 }
 
+fn claude_model_base_url_candidates(base_url: &str) -> Vec<String> {
+    let base = normalize_claude_base_url_input(base_url);
+    if base.is_empty() {
+        return Vec::new();
+    }
+
+    vec![base]
+}
+
 fn normalize_ai_base_url_input(base_url: &str) -> String {
     let mut base = base_url.trim().trim_end_matches('/').to_string();
     if let Some(prefix) = base.strip_suffix("/models") {
         base = prefix.to_string();
     }
     base
+}
+
+fn normalize_claude_base_url_input(base_url: &str) -> String {
+    let base = if base_url.trim().is_empty() {
+        CLAUDE_DEFAULT_BASE_URL
+    } else {
+        base_url.trim()
+    };
+    anthropic::client::normalize_anthropic_base_url(base)
 }
 
 fn push_unique_candidate(candidates: &mut Vec<String>, candidate: String) {
@@ -467,6 +495,17 @@ fn model_ids_from_response(value: Value) -> Vec<String> {
         .map(|id| id.trim().to_string())
         .filter(|id| !id.is_empty())
         .collect();
+    models.sort();
+    models.dedup();
+    models
+}
+
+fn model_ids_from_model_list(models: rig_core::model::ModelList) -> Vec<String> {
+    let mut models = models
+        .into_iter()
+        .map(|model| model.id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .collect::<Vec<_>>();
     models.sort();
     models.dedup();
     models
@@ -980,6 +1019,26 @@ async fn list_models_from_base_url(settings: &AiSettings, base_url: &str) -> AiR
             "List models: response did not contain any model ids. Body: {}",
             body
         ));
+    }
+    Ok(models)
+}
+
+async fn list_claude_models_from_base_url(
+    settings: &AiSettings,
+    base_url: &str,
+) -> AiResult<Vec<String>> {
+    let client = anthropic::Client::builder()
+        .api_key(settings.api_key.trim())
+        .base_url(base_url.trim())
+        .build()
+        .map_err(|e| format!("Create Claude client: {}", e))?;
+    let models = client
+        .list_models()
+        .await
+        .map_err(|e| format!("List Claude models: {}", e))?;
+    let models = model_ids_from_model_list(models);
+    if models.is_empty() {
+        return Err("List Claude models: response did not contain any model ids.".to_string());
     }
     Ok(models)
 }
@@ -2256,7 +2315,10 @@ pub async fn execute_approved_shell_command(args: RunShellCommandArgs) -> AiResu
 #[tauri::command]
 pub async fn list_ai_models(settings: Option<AiSettings>) -> AiResult<AiModelListResponse> {
     let settings = settings.unwrap_or_else(load_ai_settings);
-    let candidates = ai_model_base_url_candidates(&settings.base_url);
+    let candidates = match settings.endpoint {
+        AiEndpoint::OpenAi => ai_model_base_url_candidates(&settings.base_url),
+        AiEndpoint::Claude => claude_model_base_url_candidates(&settings.base_url),
+    };
     if candidates.is_empty() {
         return Err("AI Base URL is required.".to_string());
     }
@@ -2266,7 +2328,11 @@ pub async fn list_ai_models(settings: Option<AiSettings>) -> AiResult<AiModelLis
 
     let mut errors = Vec::new();
     for candidate in candidates {
-        match list_models_from_base_url(&settings, &candidate).await {
+        let result = match settings.endpoint {
+            AiEndpoint::OpenAi => list_models_from_base_url(&settings, &candidate).await,
+            AiEndpoint::Claude => list_claude_models_from_base_url(&settings, &candidate).await,
+        };
+        match result {
             Ok(models) => {
                 return Ok(AiModelListResponse {
                     base_url: candidate,
@@ -2287,15 +2353,38 @@ pub async fn list_ai_models(settings: Option<AiSettings>) -> AiResult<AiModelLis
 pub async fn run_ai_organizer(app: AppHandle, request: AiRunRequest) -> AiResult<AiRunResponse> {
     AI_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
     let settings = load_ai_settings();
-    if settings.base_url.trim().is_empty()
-        || settings.api_key.trim().is_empty()
-        || settings.model.trim().is_empty()
-    {
+    if settings.api_key.trim().is_empty() || settings.model.trim().is_empty() {
         return Err(
-            "AI settings are incomplete. Configure Base URL, API Key, and Model first.".to_string(),
+            "AI settings are incomplete. Configure Endpoint, API Key, and Model first.".to_string(),
         );
     }
 
+    if settings.endpoint == AiEndpoint::OpenAi && settings.base_url.trim().is_empty() {
+        return Err(
+            "AI settings are incomplete. Configure Base URL for OpenAI-compatible endpoint first."
+                .to_string(),
+        );
+    }
+
+    run_ai_organizer_with_settings(app, request, settings).await
+}
+
+async fn run_ai_organizer_with_settings(
+    app: AppHandle,
+    request: AiRunRequest,
+    settings: AiSettings,
+) -> AiResult<AiRunResponse> {
+    match settings.endpoint {
+        AiEndpoint::OpenAi => run_ai_organizer_openai(app, request, settings).await,
+        AiEndpoint::Claude => run_ai_organizer_claude(app, request, settings).await,
+    }
+}
+
+async fn run_ai_organizer_openai(
+    app: AppHandle,
+    request: AiRunRequest,
+    settings: AiSettings,
+) -> AiResult<AiRunResponse> {
     let client = openai::CompletionsClient::builder()
         .api_key(settings.api_key.trim())
         .base_url(settings.base_url.trim())
@@ -2304,27 +2393,82 @@ pub async fn run_ai_organizer(app: AppHandle, request: AiRunRequest) -> AiResult
 
     let agent = client
         .agent(settings.model.trim())
-        .name("Shelf AI")
-        .preamble(AI_ORGANIZER_PREAMBLE)
-        .tool_choice(ToolChoice::Auto)
-        .default_max_turns(AI_MAX_TOOL_TURNS)
-        .tool(ListMountedPathsTool)
-        .tool(ListClaudeSessionsTool)
-        .tool(ListCodexSessionsTool)
-        .tool(SearchSessionRecordsTool)
-        .tool(ReadFileLinesTool)
-        .tool(ReplaceFileLinesTool)
-        .tool(ReadSessionRecordLinesTool)
-        .tool(ReplaceSessionRecordLinesTool)
-        .tool(ListAiOrganizationTool)
-        .tool(CreateAiCategoryTool)
-        .tool(RenameAiCategoryTool)
-        .tool(DeleteAiCategoryTool)
-        .tool(AddAiSessionMappingTool)
-        .tool(RemoveAiSessionMappingTool)
-        .tool(RunShellCommandTool)
+        .agent_with_shelf_tools()
         .build();
 
+    stream_ai_organizer(app, request, agent).await
+}
+
+async fn run_ai_organizer_claude(
+    app: AppHandle,
+    request: AiRunRequest,
+    settings: AiSettings,
+) -> AiResult<AiRunResponse> {
+    let base_url = normalize_claude_base_url_input(&settings.base_url);
+    let client = anthropic::Client::builder()
+        .api_key(settings.api_key.trim())
+        .base_url(&base_url)
+        .build()
+        .map_err(|e| format!("Create Claude client: {}", e))?;
+
+    let agent = client
+        .agent(settings.model.trim())
+        .agent_with_shelf_tools()
+        .build();
+
+    stream_ai_organizer(app, request, agent).await
+}
+
+trait ShelfAgentTools<M, P>
+where
+    M: CompletionModel,
+    P: PromptHook<M>,
+{
+    fn agent_with_shelf_tools(
+        self,
+    ) -> rig_core::agent::AgentBuilder<M, P, rig_core::agent::WithBuilderTools>;
+}
+
+impl<M, P> ShelfAgentTools<M, P>
+    for rig_core::agent::AgentBuilder<M, P, rig_core::agent::NoToolConfig>
+where
+    M: CompletionModel,
+    P: PromptHook<M>,
+{
+    fn agent_with_shelf_tools(
+        self,
+    ) -> rig_core::agent::AgentBuilder<M, P, rig_core::agent::WithBuilderTools> {
+        self.name("Shelf AI")
+            .preamble(AI_ORGANIZER_PREAMBLE)
+            .tool_choice(ToolChoice::Auto)
+            .default_max_turns(AI_MAX_TOOL_TURNS)
+            .tool(ListMountedPathsTool)
+            .tool(ListClaudeSessionsTool)
+            .tool(ListCodexSessionsTool)
+            .tool(SearchSessionRecordsTool)
+            .tool(ReadFileLinesTool)
+            .tool(ReplaceFileLinesTool)
+            .tool(ReadSessionRecordLinesTool)
+            .tool(ReplaceSessionRecordLinesTool)
+            .tool(ListAiOrganizationTool)
+            .tool(CreateAiCategoryTool)
+            .tool(RenameAiCategoryTool)
+            .tool(DeleteAiCategoryTool)
+            .tool(AddAiSessionMappingTool)
+            .tool(RemoveAiSessionMappingTool)
+            .tool(RunShellCommandTool)
+    }
+}
+
+async fn stream_ai_organizer<M>(
+    app: AppHandle,
+    request: AiRunRequest,
+    agent: rig_core::agent::Agent<M>,
+) -> AiResult<AiRunResponse>
+where
+    M: CompletionModel + 'static,
+    M::StreamingResponse: GetTokenUsage,
+{
     let history = ai_history_to_messages(request.history);
     let mut stream = agent
         .stream_prompt(request.message)
