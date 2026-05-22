@@ -2666,4 +2666,52 @@ mod tests {
             &home_dir.join("Desktop/project/demo.jsonl")
         ));
     }
+
+    #[test]
+    fn ai_settings_defaults_legacy_json_to_openai_endpoint() {
+        let settings: AiSettings = serde_json::from_str(
+            r#"{"baseUrl":"https://api.openai.com/v1","apiKey":"sk-test","model":"gpt-test"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(settings.endpoint, AiEndpoint::OpenAi);
+        assert_eq!(settings.base_url, "https://api.openai.com/v1");
+        assert_eq!(settings.api_key, "sk-test");
+        assert_eq!(settings.model, "gpt-test");
+    }
+
+    #[test]
+    fn claude_base_url_normalization_accepts_api_roots_and_paths() {
+        assert_eq!(
+            normalize_claude_base_url_input(""),
+            "https://api.anthropic.com"
+        );
+        assert_eq!(
+            normalize_claude_base_url_input("https://api.anthropic.com/v1/messages"),
+            "https://api.anthropic.com"
+        );
+        assert_eq!(
+            normalize_claude_base_url_input("https://proxy.example.com/anthropic/v1"),
+            "https://proxy.example.com/anthropic"
+        );
+        assert_eq!(
+            claude_model_base_url_candidates("https://api.anthropic.com/v1/messages"),
+            vec!["https://api.anthropic.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn openai_base_url_candidates_keep_v1_fallback() {
+        assert_eq!(
+            ai_model_base_url_candidates("https://example.com/openai"),
+            vec![
+                "https://example.com/openai".to_string(),
+                "https://example.com/openai/v1".to_string()
+            ]
+        );
+        assert_eq!(
+            ai_model_base_url_candidates("https://example.com/openai/v1/models"),
+            vec!["https://example.com/openai/v1".to_string()]
+        );
+    }
 }
