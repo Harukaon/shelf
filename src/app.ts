@@ -5,7 +5,7 @@ import { tauriInvoke, refreshIcons, escapeHtml, formatDate } from "./helpers";
 import { Session, FileEntry, TabInfo, SessionProvider, AiSettings, AiSessionMap, AiRunResponse, AiModelListResponse, AiHistoryMessage, AiGroup, ShellCommandApproval } from "./types";
 import { TabManager } from "./modules/tabs";
 import { WorkspaceManager } from "./modules/workspace";
-import { createTerminalTab, repaintTerminal, scheduleTerminalRefit, writeToPty } from "./modules/terminal";
+import { applyTerminalTheme, createTerminalTab, repaintTerminal, scheduleTerminalRefit, setTerminalThemeMode, writeToPty, type TerminalThemeMode } from "./modules/terminal";
 import { renderFileTree, clearFileCache, setupFileTreeContextMenu } from "./modules/files";
 import { setupDragDrop, setupPanelResize } from "./modules/dragdrop";
 import { t, setLang, getLang } from "./i18n";
@@ -23,6 +23,11 @@ const SESSION_POLL_INTERVAL_MS = 60_000;
 const PENDING_SESSION_POLL_INTERVAL_MS = 5_000;
 const PENDING_SESSION_DISCOVERY_TIMEOUT_MS = 120_000;
 const PENDING_SESSION_STABILIZE_MS = 45_000;
+const THEME_STORAGE_KEY = "shelf.theme";
+
+type AppTheme = "dark" | "light" | "github-light" | "solarized-light" | "dracula" | "monokai";
+
+const APP_THEMES = new Set<AppTheme>(["dark", "light", "github-light", "solarized-light", "dracula", "monokai"]);
 
 type PendingSessionTab = {
   workspacePath: string;
@@ -87,6 +92,7 @@ class App {
   activeSessionIds = new Set<string>();
   focusedSessionId: string | null = null;
   shellSetting = "zsh";
+  theme: AppTheme = "dark";
   claudePath = "claude";
   codexPath = "codex";
   pinnedIds = new Set<string>();
@@ -134,6 +140,8 @@ class App {
     this.refreshBtn = document.getElementById("refresh-sessions-btn")!;
     this.fileTreeEl = document.getElementById("file-tree")!;
     this.terminalContainer = document.getElementById("terminal-container")!;
+    this._loadTheme();
+    this._applyTheme();
 
     this.tabs = new TabManager(
       this.tabList, this.terminalContainer,
@@ -328,6 +336,34 @@ class App {
       if (s?.language) { setLang(s.language); }
       if (s?.pinned) { this.pinnedIds = new Set(s.pinned); }
     } catch (_) { /* use default */ }
+  }
+
+  private _loadTheme() {
+    try {
+      const saved = localStorage.getItem(THEME_STORAGE_KEY);
+      this.theme = APP_THEMES.has(saved as AppTheme) ? saved as AppTheme : "dark";
+    } catch (_) {
+      this.theme = "dark";
+    }
+  }
+
+  private _setTheme(theme: AppTheme) {
+    this.theme = theme;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch (_) {
+      /* localStorage may be unavailable in restricted contexts */
+    }
+    this._applyTheme();
+  }
+
+  private _applyTheme() {
+    document.documentElement.dataset.theme = this.theme;
+    setTerminalThemeMode(this.theme as TerminalThemeMode);
+    if (!this.tabs) return;
+    for (const tab of this.tabs.tabsMap.values()) {
+      applyTerminalTheme(tab.terminal, this.theme as TerminalThemeMode);
+    }
   }
 
   private _updateStaticTexts() {
@@ -750,6 +786,16 @@ class App {
           <option value="zh">${t("settings.language_zh")}</option>
         </select>
       </div>
+      <div class="settings-row"><label>${t("settings.theme")}</label>
+        <select id="settings-theme">
+          <option value="dark">${t("settings.theme_dark")}</option>
+          <option value="light">${t("settings.theme_light")}</option>
+          <option value="github-light">${t("settings.theme_github_light")}</option>
+          <option value="solarized-light">${t("settings.theme_solarized_light")}</option>
+          <option value="dracula">${t("settings.theme_dracula")}</option>
+          <option value="monokai">${t("settings.theme_monokai")}</option>
+        </select>
+      </div>
       <div class="settings-section-title">${t("settings.ai_title")}</div>
       <div class="settings-note">${t("settings.ai_help")}</div>
       <div class="settings-row stacked">
@@ -795,6 +841,8 @@ class App {
       }
       const langSel = panel.querySelector("#settings-lang") as HTMLSelectElement;
       langSel.value = getLang();
+      const themeSel = panel.querySelector("#settings-theme") as HTMLSelectElement;
+      themeSel.value = this.theme;
       (panel.querySelector("#settings-ai-base-url") as HTMLInputElement).value = aiSettings.baseUrl || "";
       (panel.querySelector("#settings-ai-api-key") as HTMLInputElement).value = aiSettings.apiKey || "";
       (panel.querySelector("#settings-ai-model") as HTMLInputElement).value = aiSettings.model || "";
@@ -807,7 +855,10 @@ class App {
     panel.querySelector("#settings-save")!.addEventListener("click", async () => {
       this.shellSetting = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;
       const newLang = (panel.querySelector("#settings-lang") as HTMLSelectElement).value;
+      const selectedTheme = (panel.querySelector("#settings-theme") as HTMLSelectElement).value as AppTheme;
+      const newTheme = APP_THEMES.has(selectedTheme) ? selectedTheme : "dark";
       setLang(newLang);
+      this._setTheme(newTheme);
       const aiSettings: AiSettings = {
         baseUrl: (panel.querySelector("#settings-ai-base-url") as HTMLInputElement).value.trim(),
         apiKey: (panel.querySelector("#settings-ai-api-key") as HTMLInputElement).value.trim(),

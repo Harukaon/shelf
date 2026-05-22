@@ -1,4 +1,4 @@
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { spawn, IPty, IPtyForkOptions } from "./pty";
 import { TabInfo } from "../types";
@@ -181,28 +181,154 @@ export function repaintTerminal(tab: TabInfo) {
   });
 }
 
-const TERMINAL_THEME = {
-  background: "#282C34",
-  foreground: "#DCDDDF",
-  cursor: "#F3F3F4",
-  selectionBackground: "#3A4250",
-  black: "#2b313c",
-  red: "#e06c75",
-  green: "#98c379",
-  yellow: "#d19a66",
-  blue: "#61afef",
-  magenta: "#c678dd",
-  cyan: "#56b6c2",
-  white: "#d7dae0",
-  brightBlack: "#5c6370",
-  brightRed: "#e86671",
-  brightGreen: "#a5d178",
-  brightYellow: "#e5c07b",
-  brightBlue: "#71b8ff",
-  brightMagenta: "#d48bea",
-  brightCyan: "#66c8d5",
-  brightWhite: "#f1f3f5",
-};
+export type TerminalThemeMode = "dark" | "light" | "github-light" | "solarized-light" | "dracula" | "monokai";
+
+const TERMINAL_THEMES = {
+  dark: {
+    background: "#282C34",
+    foreground: "#DCDDDF",
+    cursor: "#F3F3F4",
+    selectionBackground: "#3A4250",
+    black: "#2b313c",
+    red: "#e06c75",
+    green: "#98c379",
+    yellow: "#d19a66",
+    blue: "#61afef",
+    magenta: "#c678dd",
+    cyan: "#56b6c2",
+    white: "#d7dae0",
+    brightBlack: "#5c6370",
+    brightRed: "#e86671",
+    brightGreen: "#a5d178",
+    brightYellow: "#e5c07b",
+    brightBlue: "#71b8ff",
+    brightMagenta: "#d48bea",
+    brightCyan: "#66c8d5",
+    brightWhite: "#f1f3f5",
+  },
+  light: {
+    background: "#FFFFFF",
+    foreground: "#24292F",
+    cursor: "#0969DA",
+    selectionBackground: "#DBEAFE",
+    black: "#24292F",
+    red: "#CF222E",
+    green: "#1A7F37",
+    yellow: "#9A6700",
+    blue: "#0969DA",
+    magenta: "#8250DF",
+    cyan: "#1B7C83",
+    white: "#EAEFF2",
+    brightBlack: "#6E7781",
+    brightRed: "#A40E26",
+    brightGreen: "#116329",
+    brightYellow: "#7D4E00",
+    brightBlue: "#0550AE",
+    brightMagenta: "#6639BA",
+    brightCyan: "#0A6B70",
+    brightWhite: "#FFFFFF",
+  },
+  "github-light": {
+    background: "#FFFFFF",
+    foreground: "#24292F",
+    cursor: "#0969DA",
+    selectionBackground: "#DDF4FF",
+    black: "#24292F",
+    red: "#CF222E",
+    green: "#1A7F37",
+    yellow: "#9A6700",
+    blue: "#0969DA",
+    magenta: "#8250DF",
+    cyan: "#1B7C83",
+    white: "#D0D7DE",
+    brightBlack: "#6E7781",
+    brightRed: "#A40E26",
+    brightGreen: "#116329",
+    brightYellow: "#7D4E00",
+    brightBlue: "#0550AE",
+    brightMagenta: "#6639BA",
+    brightCyan: "#0A6B70",
+    brightWhite: "#F6F8FA",
+  },
+  "solarized-light": {
+    background: "#FDF6E3",
+    foreground: "#586E75",
+    cursor: "#268BD2",
+    selectionBackground: "#D7E7E8",
+    black: "#073642",
+    red: "#DC322F",
+    green: "#859900",
+    yellow: "#B58900",
+    blue: "#268BD2",
+    magenta: "#D33682",
+    cyan: "#2AA198",
+    white: "#EEE8D5",
+    brightBlack: "#839496",
+    brightRed: "#CB4B16",
+    brightGreen: "#586E75",
+    brightYellow: "#657B83",
+    brightBlue: "#839496",
+    brightMagenta: "#6C71C4",
+    brightCyan: "#93A1A1",
+    brightWhite: "#FDF6E3",
+  },
+  dracula: {
+    background: "#282A36",
+    foreground: "#F8F8F2",
+    cursor: "#F8F8F2",
+    selectionBackground: "#44475A",
+    black: "#21222C",
+    red: "#FF5555",
+    green: "#50FA7B",
+    yellow: "#F1FA8C",
+    blue: "#BD93F9",
+    magenta: "#FF79C6",
+    cyan: "#8BE9FD",
+    white: "#F8F8F2",
+    brightBlack: "#6272A4",
+    brightRed: "#FF6E6E",
+    brightGreen: "#69FF94",
+    brightYellow: "#FFFFA5",
+    brightBlue: "#D6ACFF",
+    brightMagenta: "#FF92DF",
+    brightCyan: "#A4FFFF",
+    brightWhite: "#FFFFFF",
+  },
+  monokai: {
+    background: "#272822",
+    foreground: "#F8F8F2",
+    cursor: "#F8F8F0",
+    selectionBackground: "#49483E",
+    black: "#272822",
+    red: "#F92672",
+    green: "#A6E22E",
+    yellow: "#E6DB74",
+    blue: "#66D9EF",
+    magenta: "#AE81FF",
+    cyan: "#A1EFE4",
+    white: "#F8F8F2",
+    brightBlack: "#75715E",
+    brightRed: "#F92672",
+    brightGreen: "#A6E22E",
+    brightYellow: "#E6DB74",
+    brightBlue: "#66D9EF",
+    brightMagenta: "#AE81FF",
+    brightCyan: "#A1EFE4",
+    brightWhite: "#F9F8F5",
+  },
+} satisfies Record<TerminalThemeMode, ITheme>;
+
+let terminalThemeMode: TerminalThemeMode = "dark";
+
+export function setTerminalThemeMode(mode: TerminalThemeMode) {
+  terminalThemeMode = mode;
+}
+
+export function applyTerminalTheme(terminal: Terminal | null | undefined, mode: TerminalThemeMode = terminalThemeMode) {
+  if (!terminal) return;
+  terminal.options.theme = TERMINAL_THEMES[mode];
+  terminal.refresh(0, Math.max(0, terminal.rows - 1));
+}
 
 export function createTerminalTab(
   tabId: string,
@@ -217,7 +343,7 @@ export function createTerminalTab(
     fontSize: 13,
     ...fontOptions,
     drawBoldTextInBrightColors: false,
-    theme: TERMINAL_THEME,
+    theme: TERMINAL_THEMES[terminalThemeMode],
   });
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
