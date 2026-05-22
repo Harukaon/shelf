@@ -1,0 +1,245 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  color-scheme: dark;
+  --bg-primary: #282c34;
+  --bg-secondary: #1f242d;
+  --bg-tertiary: #171b23;
+  --bg-hover: #333a46;
+  --bg-active: #3a4250;
+  --text-primary: #e0e0e1;
+  --text-secondary: #b8bdc7;
+  --text-muted: #7f8795;
+  --accent: #8fb3e8;
+  --accent-dim: #6fa8dc;
+  --green: #98c379;
+  --red: #e06c75;
+  --yellow: #e5c07b;
+  --danger: var(--red);
+  --border: #343b49;
+  --shadow: rgba(0,0,0,0.42);
+  --overlay: rgba(0,0,0,0.3);
+  --surface-glow: rgba(143, 179, 232, 0.12);
+  --tab-height: 38px;
+  --status-height: 28px;
+  --tab-bg: #1f242d;
+  --tab-active-bg: #282c34;
+  --left-panel-width: 260px;
+  --right-panel-width: 260px;
+  --font-mono: "SF Mono", Menlo, Consolas, monospace;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #eaeef2;
+  --bg-hover: #eef2f6;
+  --bg-active: #dbeafe;
+  --text-primary: #24292f;
+  --text-secondary: #57606a;
+  --text-muted: #8c959f;
+  --accent: #0969da;
+  --accent-dim: #218bff;
+  --green: #1a7f37;
+  --red: #cf222e;
+  --yellow: #9a6700;
+  --danger: var(--red);
+  --border: #d0d7de;
+  --shadow: rgba(31, 35, 40, 0.16);
+  --overlay: rgba(31, 35, 40, 0.18);
+  --surface-glow: rgba(9, 105, 218, 0.10);
+  --tab-bg: #f6f8fa;
+  --tab-active-bg: #ffffff;
+}
+
+:root[data-theme="github-light"] {
+  color-scheme: light;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #eaeef2;
+  --bg-hover: #f3f4f6;
+  --bg-active: #ddf4ff;
+  --text-primary: #24292f;
+  --text-secondary: #57606a;
+  --text-muted: #6e7781;
+  --accent: #0969da;
+  --accent-dim: #218bff;
+  --green: #1a7f37;
+  --red: #cf222e;
+  --yellow: #9a6700;
+  --danger: var(--red);
+  --border: #d0d7de;
+  --shadow: rgba(31, 35, 40, 0.16);
+  --overlay: rgba(31, 35, 40, 0.18);
+  --surface-glow: rgba(9, 105, 218, 0.10);
+  --tab-bg: #f6f8fa;
+  --tab-active-bg: #ffffff;
+}
+
+:root[data-theme="solarized-light"] {
+  color-scheme: light;
+  --bg-primary: #fdf6e3;
+  --bg-secondary: #eee8d5;
+  --bg-tertiary: #e6dec5;
+  --bg-hover: #e9e2cc;
+  --bg-active: #d7e7e8;
+  --text-primary: #586e75;
+  --text-secondary: #657b83;
+  --text-muted: #93a1a1;
+  --accent: #268bd2;
+  --accent-dim: #2aa198;
+  --green: #859900;
+  --red: #dc322f;
+  --yellow: #b58900;
+  --danger: var(--red);
+  --border: #d6cfb7;
+  --shadow: rgba(101, 123, 131, 0.18);
+  --overlay: rgba(88, 110, 117, 0.16);
+  --surface-glow: rgba(38, 139, 210, 0.12);
+  --tab-bg: #eee8d5;
+  --tab-active-bg: #fdf6e3;
+}
+
+:root[data-theme="dracula"] {
+  color-scheme: dark;
+  --bg-primary: #282a36;
+  --bg-secondary: #21222c;
+  --bg-tertiary: #191a21;
+  --bg-hover: #343746;
+  --bg-active: #44475a;
+  --text-primary: #f8f8f2;
+  --text-secondary: #d7d8df;
+  --text-muted: #8b8da1;
+  --accent: #bd93f9;
+  --accent-dim: #8be9fd;
+  --green: #50fa7b;
+  --red: #ff5555;
+  --yellow: #f1fa8c;
+  --danger: var(--red);
+  --border: #3d4050;
+  --shadow: rgba(0, 0, 0, 0.46);
+  --overlay: rgba(0, 0, 0, 0.34);
+  --surface-glow: rgba(189, 147, 249, 0.14);
+  --tab-bg: #21222c;
+  --tab-active-bg: #282a36;
+}
+
+:root[data-theme="monokai"] {
+  color-scheme: dark;
+  --bg-primary: #272822;
+  --bg-secondary: #1f201b;
+  --bg-tertiary: #171812;
+  --bg-hover: #34352e;
+  --bg-active: #3e3d32;
+  --text-primary: #f8f8f2;
+  --text-secondary: #d8d8d0;
+  --text-muted: #909184;
+  --accent: #66d9ef;
+  --accent-dim: #a6e22e;
+  --green: #a6e22e;
+  --red: #f92672;
+  --yellow: #e6db74;
+  --danger: var(--red);
+  --border: #3e3d32;
+  --shadow: rgba(0, 0, 0, 0.46);
+  --overlay: rgba(0, 0, 0, 0.34);
+  --surface-glow: rgba(102, 217, 239, 0.13);
+  --tab-bg: #1f201b;
+  --tab-active-bg: #272822;
+}
+
+/* ─── Global Scrollbar ─── */
+html, body, #app,
+#workspace-list, #file-tree, .picker-list,
+.session-picker .picker-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-active) transparent;
+}
+html::-webkit-scrollbar, body::-webkit-scrollbar, #app::-webkit-scrollbar,
+#workspace-list::-webkit-scrollbar, #file-tree::-webkit-scrollbar,
+.picker-list::-webkit-scrollbar,
+.session-picker .picker-list::-webkit-scrollbar {
+  width: 8px; height: 8px;
+}
+html::-webkit-scrollbar-track, body::-webkit-scrollbar-track, #app::-webkit-scrollbar-track,
+#workspace-list::-webkit-scrollbar-track, #file-tree::-webkit-scrollbar-track,
+.picker-list::-webkit-scrollbar-track,
+.session-picker .picker-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb, #app::-webkit-scrollbar-thumb,
+#workspace-list::-webkit-scrollbar-thumb, #file-tree::-webkit-scrollbar-thumb,
+.picker-list::-webkit-scrollbar-thumb,
+.session-picker .picker-list::-webkit-scrollbar-thumb {
+  background: var(--bg-active); border-radius: 4px;
+}
+html::-webkit-scrollbar-thumb:hover, body::-webkit-scrollbar-thumb:hover, #app::-webkit-scrollbar-thumb:hover,
+#workspace-list::-webkit-scrollbar-thumb:hover, #file-tree::-webkit-scrollbar-thumb:hover,
+.picker-list::-webkit-scrollbar-thumb:hover,
+.session-picker .picker-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+html::-webkit-scrollbar-corner, body::-webkit-scrollbar-corner, #app::-webkit-scrollbar-corner,
+#workspace-list::-webkit-scrollbar-corner, #file-tree::-webkit-scrollbar-corner,
+.picker-list::-webkit-scrollbar-corner,
+.session-picker .picker-list::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+html, body, #app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-size: 13px;
+}
+
+body[data-platform="macos"] {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+}
+
+body[data-platform="windows"] {
+  font-family: "Segoe UI", sans-serif;
+}
+
+/* ─── Monospace for code/terminal contexts ─── */
+code, kbd, pre,
+.start-page-warning code, .start-page-hints kbd {
+  font-family: ui-monospace, monospace;
+}
+
+body[data-platform="macos"] code,
+body[data-platform="macos"] kbd,
+body[data-platform="macos"] pre,
+body[data-platform="macos"] .start-page-warning code,
+body[data-platform="macos"] .start-page-hints kbd {
+  font-family: "SF Mono", Menlo, monospace;
+}
+
+body[data-platform="windows"] code,
+body[data-platform="windows"] kbd,
+body[data-platform="windows"] pre,
+body[data-platform="windows"] .start-page-warning code,
+body[data-platform="windows"] .start-page-hints kbd {
+  font-family: Consolas, "Courier New", monospace;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── Icon base ─── */
+i[data-lucide] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
