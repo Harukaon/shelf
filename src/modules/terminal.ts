@@ -1,7 +1,7 @@
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { spawn, IPty, IPtyForkOptions } from "./pty";
-import { TabInfo } from "../types";
+import { TabInfo, SshTarget } from "../types";
 import { t } from "../i18n";
 
 type TerminalTabOptions = {
@@ -12,6 +12,7 @@ type TerminalTabOptions = {
   shell?: string;
   command?: { bin: string; args: string[] };
   onUnreadChange?: (tabId: string, hasUnread: boolean) => void;
+  ssh?: SshTarget;
 };
 
 const COMMAND_FALLBACK_WINDOW_MS = 4_000;

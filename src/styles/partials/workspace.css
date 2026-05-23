@@ -28,6 +28,21 @@
 }
 .workspace-header:hover { background: var(--bg-hover); }
 .workspace-header.selected { background: var(--bg-active); }
+
+.workspace-loading {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.workspace-loading .spin {
+  display: inline-block;
+  animation: spin 0.8s linear infinite;
+  width: 14px; height: 14px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .workspace-header .ws-name { overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .workspace-header .ws-arrow { color: var(--text-muted); transition: transform 0.15s; width: 14px; height: 14px; }
 .workspace-header .ws-arrow.expanded { transform: rotate(90deg); }

@@ -4,7 +4,7 @@ import { tauriInvoke } from "../helpers";
 import { t } from "../i18n";
 import { START_TAB_ID } from "./app-constants";
 import { createTerminalTab, scheduleTerminalRefit } from "./terminal";
-import type { SessionProvider, TabInfo } from "../types";
+import type { SessionProvider, SshTarget, TabInfo } from "../types";
 
 export type SavedWindowState = {
   x: number;
@@ -23,6 +23,7 @@ export type SavedTabState = {
   sessionProvider?: SessionProvider;
   sessionId?: string;
   shell?: string;
+  ssh?: SshTarget;
 };
 
 export type SavedAppState = {
@@ -81,6 +82,7 @@ export function _buildAppState(app: any, windowState?: SavedWindowState): SavedA
       sessionProvider: tab.sessionProvider,
       sessionId: tab.sessionId,
       shell: tab.shell,
+      ssh: (tab as any).ssh,
     });
   }
 
@@ -202,6 +204,14 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
     const command = session.provider === "codex"
       ? { bin: app.codexPath, args: ["resume", session.id, "-C", cwd] }
       : { bin: app.claudePath, args: ["--resume", session.id] };
+    // If this was an SSH session, spawn via SSH
+    if (saved.ssh) {
+      const sshArgs = buildSshArgs(saved.ssh, command.bin + " " + command.args.join(" "));
+      return createTerminalTab(saved.id, app._displayTitleForSession(session) || saved.title, app.terminalContainer,
+        (id, data) => app._writePty(id, data),
+        { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh },
+      );
+    }
     return createTerminalTab(saved.id, app._displayTitleForSession(session) || saved.title, app.terminalContainer,
       (id, data) => app._writePty(id, data),
       { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command },
@@ -210,6 +220,19 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
 
   if (saved.kind === "new-session") {
     if (!saved.sessionProvider || !saved.workspacePath) return null;
+    // If this was an SSH session, spawn via SSH
+    if (saved.ssh) {
+      const remoteCmd = saved.sessionProvider === "codex"
+        ? `codex -C ${saved.workspacePath}`
+        : "claude";
+      const sshArgs = buildSshArgs(saved.ssh, remoteCmd);
+      const title = saved.title || t("ssh.new_shell");
+      const tab = createTerminalTab(saved.id, title, app.terminalContainer,
+        (id, data) => app._writePty(id, data),
+        { cwd: saved.workspacePath, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh },
+      );
+      return tab;
+    }
     const command = saved.sessionProvider === "codex"
       ? { bin: app.codexPath, args: ["-C", saved.workspacePath] }
       : { bin: app.claudePath, args: [] };
@@ -228,6 +251,15 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
     return tab;
   }
 
+  // SSH plain shell tab
+  if (saved.ssh) {
+    const sshArgs = buildSshArgs(saved.ssh);
+    return createTerminalTab(saved.id, saved.title || t("ssh.new_shell"), app.terminalContainer,
+      (id, data) => app._writePty(id, data),
+      { cwd: saved.cwd, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, shell: "ssh", command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh },
+    );
+  }
+
   return createTerminalTab(saved.id, saved.title || t("tab.terminal"), app.terminalContainer,
     (id, data) => app._writePty(id, data),
     {
@@ -237,4 +269,23 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       shell: saved.shell || app.shellSetting,
     },
   );
+}
+
+function buildSshArgs(ssh: SshTarget, remoteCommand?: string): string[] {
+  const args: string[] = [];
+  args.push("-o", "StrictHostKeyChecking=accept-new");
+  args.push("-o", "ConnectTimeout=10");
+  args.push("-t");
+  if (ssh.port) {
+    args.push("-p", String(ssh.port));
+  }
+  if (ssh.identityFile) {
+    args.push("-i", ssh.identityFile);
+  }
+  const dest = ssh.user ? `${ssh.user}@${ssh.host}` : ssh.host;
+  args.push(dest);
+  if (remoteCommand) {
+    args.push("--", remoteCommand);
+  }
+  return args;
 }

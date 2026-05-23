@@ -13,6 +13,32 @@ impl Default for SessionProvider {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct SshTarget {
+    pub host: String,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub identity_file: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+impl SshTarget {
+    pub fn display_host(&self) -> String {
+        let base = match (&self.user, &self.host) {
+            (Some(u), h) => format!("{}@{}", u, h),
+            (None, h) => h.clone(),
+        };
+        match self.port {
+            Some(p) if p != 22 => format!("{}:{}", base, p),
+            _ => base,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Session {
     pub id: String,
@@ -35,6 +61,8 @@ pub struct Workspace {
     pub path: String,
     #[serde(default)]
     pub provider: SessionProvider,
+    #[serde(default)]
+    pub ssh: Option<SshTarget>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

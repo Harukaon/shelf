@@ -47,12 +47,12 @@ pub(super) fn mounted_workspaces_for_path(path: Option<&str>) -> Vec<Workspace> 
 
 pub(super) fn scan_claude_sessions(path: &str) -> Result<Vec<Session>, AiToolError> {
     let workspace = mounted_workspace_for_path(path, SessionProvider::Claude)?;
-    crate::session::scan_sessions(&workspace.path).map_err(AiToolError::Failed)
+    crate::commands::sessions::scan_sessions_sync(&workspace.path).map_err(AiToolError::Failed)
 }
 
 pub(super) fn scan_codex_sessions(path: &str) -> Result<Vec<Session>, AiToolError> {
     let workspace = mounted_workspace_for_path(path, SessionProvider::Codex)?;
-    crate::commands::sessions::scan_codex_sessions(workspace.path).map_err(AiToolError::Failed)
+    crate::commands::sessions::scan_codex_sessions_sync(&workspace.path).map_err(AiToolError::Failed)
 }
 
 #[derive(Debug, Clone)]
@@ -165,7 +165,7 @@ pub(super) fn mounted_session(
             let sessions = match provider {
                 SessionProvider::Claude => crate::session::scan_sessions(&workspace.path),
                 SessionProvider::Codex => {
-                    crate::commands::sessions::scan_codex_sessions(workspace.path)
+                    crate::commands::sessions::scan_codex_sessions_sync(&workspace.path)
                 }
             };
             sessions
@@ -269,7 +269,7 @@ pub(super) fn configured_session_record_files(
                 }
             }
             SessionProvider::Codex => {
-                let Ok(sessions) = crate::commands::sessions::scan_codex_sessions(workspace.path)
+                let Ok(sessions) = crate::commands::sessions::scan_codex_sessions_sync(&workspace.path)
                 else {
                     continue;
                 };

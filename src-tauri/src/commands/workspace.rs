@@ -1,4 +1,4 @@
-use crate::session::{SessionProvider, ShelfConfig, Workspace};
+use crate::session::{SessionProvider, ShelfConfig, SshTarget, Workspace};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -65,26 +65,37 @@ fn save_config(config: &ShelfConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn add_workspace(path: String, provider: Option<SessionProvider>) -> Result<Workspace, String> {
+pub fn add_workspace(path: String, provider: Option<SessionProvider>, ssh: Option<SshTarget>) -> Result<Workspace, String> {
     let provider = provider.unwrap_or_default();
-    let name = std::path::Path::new(&path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.clone());
+    let name = if let Some(ref ssh_target) = ssh {
+        ssh_target.display_host()
+    } else {
+        std::path::Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone())
+    };
 
     let workspace = Workspace {
         name: name.clone(),
         path: path.clone(),
         provider,
+        ssh: ssh.clone(),
     };
 
     let mut config = load_config();
 
-    if config
-        .workspaces
-        .iter()
-        .any(|w| w.path == path && w.provider == provider)
-    {
+    // For SSH workspaces, uniqueness is by (host, path); for local by (path, provider)
+    let already_exists = if let Some(ref ssh_target) = ssh {
+        config.workspaces.iter().any(|w| {
+            w.path == path
+                && w.ssh.as_ref().map_or(false, |s| s.host == ssh_target.host)
+        })
+    } else {
+        config.workspaces.iter().any(|w| w.path == path && w.provider == provider)
+    };
+
+    if already_exists {
         return Err("Workspace already exists".to_string());
     }
 
@@ -95,12 +106,16 @@ pub fn add_workspace(path: String, provider: Option<SessionProvider>) -> Result<
 }
 
 #[tauri::command]
-pub fn remove_workspace(path: String, provider: Option<SessionProvider>) -> Result<(), String> {
+pub fn remove_workspace(path: String, provider: Option<SessionProvider>, ssh: Option<SshTarget>) -> Result<(), String> {
     let provider = provider.unwrap_or_default();
     let mut config = load_config();
-    config
-        .workspaces
-        .retain(|w| !(w.path == path && w.provider == provider));
+    if let Some(ref ssh_target) = ssh {
+        config.workspaces.retain(|w| {
+            !(w.path == path && w.ssh.as_ref().map_or(false, |s| s.host == ssh_target.host))
+        });
+    } else {
+        config.workspaces.retain(|w| !(w.path == path && w.provider == provider));
+    }
     save_config(&config)?;
     Ok(())
 }
@@ -112,12 +127,20 @@ pub fn list_workspaces() -> Result<Vec<serde_json::Value>, String> {
         .workspaces
         .into_iter()
         .map(|w| {
-            serde_json::json!({
+            let mut val = serde_json::json!({
                 "name": w.name,
                 "path": w.path,
                 "provider": w.provider,
                 "session_count": 0,
-            })
+            });
+            if let Some(ssh) = w.ssh {
+                val["ssh"] = serde_json::json!({
+                    "host": ssh.host,
+                    "port": ssh.port,
+                    "identityFile": ssh.identity_file,
+                });
+            }
+            val
         })
         .collect();
     Ok(items)

@@ -1,23 +1,246 @@
-use crate::session::{sanitize_path, Session, SessionProvider};
+use crate::session::{sanitize_path, Session, SessionProvider, SshTarget};
+use crate::commands::ssh::ssh_exec;
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 #[tauri::command]
-pub fn scan_sessions(workspace_path: String) -> Result<Vec<Session>, String> {
-    crate::session::scan_sessions(&workspace_path)
+pub async fn scan_sessions(workspace_path: String, ssh: Option<SshTarget>) -> Result<Vec<Session>, String> {
+    if let Some(ssh_target) = ssh {
+        return tauri::async_runtime::spawn_blocking(move || scan_sessions_remote(&workspace_path, &ssh_target))
+            .await
+            .map_err(|e| format!("SSH scan failed: {}", e))?;
+    }
+    tauri::async_runtime::spawn_blocking(move || crate::session::scan_sessions(&workspace_path))
+        .await
+        .map_err(|e| format!("Scan failed: {}", e))?
+}
+
+/// Synchronous scan for internal use (AI tools, etc.) that don't use SSH.
+pub fn scan_sessions_sync(workspace_path: &str) -> Result<Vec<Session>, String> {
+    crate::session::scan_sessions(workspace_path)
 }
 
 #[tauri::command]
-pub fn scan_codex_sessions(workspace_path: String) -> Result<Vec<Session>, String> {
+pub async fn scan_codex_sessions(workspace_path: String, ssh: Option<SshTarget>) -> Result<Vec<Session>, String> {
+    if let Some(ssh_target) = ssh {
+        return tauri::async_runtime::spawn_blocking(move || scan_codex_sessions_remote(&workspace_path, &ssh_target))
+            .await
+            .map_err(|e| format!("SSH Codex scan failed: {}", e))?;
+    }
+    tauri::async_runtime::spawn_blocking(move || scan_codex_sessions_local(&workspace_path))
+        .await
+        .map_err(|e| format!("Codex scan failed: {}", e))?
+}
+
+/// Synchronous codex scan for internal use (AI tools, etc.) that don't use SSH.
+pub fn scan_codex_sessions_sync(workspace_path: &str) -> Result<Vec<Session>, String> {
+    scan_codex_sessions_local(workspace_path)
+}
+
+fn scan_sessions_remote(workspace_path: &str, ssh_target: &SshTarget) -> Result<Vec<Session>, String> {
+    let sanitized = sanitize_path(workspace_path);
+    // List JSONL files in remote ~/.claude/projects/<sanitized>/
+    let ls_cmd = format!("ls ~/.claude/projects/{}/ 2>/dev/null", sanitized);
+    let ls_output = ssh_exec(ssh_target, &ls_cmd)?;
+    if ls_output.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut sessions = Vec::new();
+    for line in ls_output.lines() {
+        let filename = line.trim();
+        if !filename.ends_with(".jsonl") {
+            continue;
+        }
+        let cat_cmd = format!("cat ~/.claude/projects/{}/{}", sanitized, filename);
+        let content = match ssh_exec(ssh_target, &cat_cmd) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if let Ok(Some(session)) = parse_remote_session_file(&content, filename, ssh_target) {
+            sessions.push(session);
+        }
+    }
+
+    sessions.sort_by(|a, b| {
+        b.started_at
+            .cmp(&a.started_at)
+            .then_with(|| b.updated_at.cmp(&a.updated_at))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    Ok(sessions)
+}
+
+fn parse_remote_session_file(content: &str, filename: &str, _ssh_target: &SshTarget) -> Result<Option<Session>, String> {
+    let mut session_id = String::new();
+    let mut cwd = String::new();
+    let mut custom_title: Option<String> = None;
+    let mut ai_title: Option<String> = None;
+    let mut first_prompt: Option<String> = None;
+    let mut started_at = String::new();
+    let mut updated_at: Option<DateTime<Utc>> = None;
+    let mut version = String::new();
+    let mut message_count = 0usize;
+
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        message_count += 1;
+        if let Some(timestamp) = value["timestamp"].as_str() {
+            if let Ok(parsed) = DateTime::parse_from_rfc3339(timestamp) {
+                let parsed_utc = parsed.with_timezone(&Utc);
+                updated_at = Some(updated_at.map_or(parsed_utc, |current| current.max(parsed_utc)));
+            }
+        }
+
+        let msg_type = value["type"].as_str().unwrap_or("");
+
+        match msg_type {
+            "user" => {
+                if first_prompt.is_none() {
+                    if let Some(content) = value["message"]["content"].as_str() {
+                        let trimmed = content.trim();
+                        let preview: String = trimmed.chars().take(80).collect();
+                        first_prompt = Some(if trimmed.len() > 80 {
+                            format!("{}...", preview)
+                        } else {
+                            preview
+                        });
+                    }
+                }
+                if session_id.is_empty() {
+                    session_id = value["sessionId"].as_str().unwrap_or("").to_string();
+                }
+                if cwd.is_empty() {
+                    cwd = value["cwd"].as_str().unwrap_or("").to_string();
+                }
+                if started_at.is_empty() {
+                    started_at = value["timestamp"].as_str().unwrap_or("").to_string();
+                }
+                if version.is_empty() {
+                    version = value["version"].as_str().unwrap_or("").to_string();
+                }
+            }
+            "custom-title" => {
+                custom_title = value["customTitle"].as_str().map(|s| s.to_string());
+            }
+            "ai-title" => {
+                ai_title = value["aiTitle"].as_str().map(|s| s.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    if session_id.is_empty() {
+        return Ok(None);
+    }
+
+    // Strip .jsonl extension for file_path
+    let file_path = filename.trim_end_matches(".jsonl").to_string();
+
+    let display_title = custom_title
+        .clone()
+        .or_else(|| ai_title.clone())
+        .or_else(|| first_prompt.clone())
+        .unwrap_or_else(|| "(untitled)".to_string());
+    let updated_at = updated_at
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| started_at.clone());
+
+    Ok(Some(Session {
+        id: session_id,
+        cwd,
+        display_title,
+        custom_title,
+        ai_title,
+        first_prompt,
+        message_count,
+        started_at,
+        updated_at,
+        file_path,
+        version,
+        provider: SessionProvider::Claude,
+    }))
+}
+
+fn scan_codex_sessions_remote(workspace_path: &str, ssh_target: &SshTarget) -> Result<Vec<Session>, String> {
+    // Find the newest codex state db on the remote host
+    let find_cmd = "ls -t ~/.codex/state_*.sqlite 2>/dev/null | head -1";
+    let db_path_remote = ssh_exec(ssh_target, find_cmd)?;
+    if db_path_remote.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Query codex sessions via remote sqlite3
+    let sql = format!(
+        "select id, coalesce(title,''), coalesce(cwd,''), coalesce(first_user_message,''), \
+         coalesce(created_at_ms, created_at*1000), coalesce(updated_at_ms, updated_at*1000), \
+         coalesce(rollout_path,''), coalesce(cli_version,'') \
+         from threads where archived=0 \
+         order by coalesce(updated_at_ms, updated_at*1000) desc, id desc"
+    );
+    let query_cmd = format!("sqlite3 '{}' -separator '|' \"{}\"", db_path_remote, sql.replace('"', "\\\""));
+    let output = ssh_exec(ssh_target, &query_cmd)?;
+
+    let ws_normalized = normalize_path(workspace_path);
+    let mut sessions = Vec::new();
+
+    for line in output.lines() {
+        let fields: Vec<&str> = line.split('|').collect();
+        if fields.len() < 8 {
+            continue;
+        }
+        let id = fields[0].to_string();
+        let title = fields[1].to_string();
+        let cwd = fields[2].to_string();
+        let first_user_message = fields[3].to_string();
+        let created_at_ms: Option<i64> = fields[4].parse().ok();
+        let updated_at_ms: Option<i64> = fields[5].parse().ok();
+        let rollout_path = fields[6].to_string();
+        let cli_version = fields[7].to_string();
+
+        let cwd_normalized = normalize_path(&cwd);
+        if !path_equal_or_nested(&cwd_normalized, &ws_normalized) {
+            continue;
+        }
+
+        let started_at = ms_to_rfc3339(created_at_ms).unwrap_or_default();
+        let updated_at_val = ms_to_rfc3339(updated_at_ms).unwrap_or_else(|| started_at.clone());
+
+        sessions.push(Session {
+            id,
+            cwd,
+            display_title: if title.trim().is_empty() { "(untitled)".to_string() } else { title },
+            custom_title: None,
+            ai_title: None,
+            first_prompt: if first_user_message.trim().is_empty() { None } else { Some(first_user_message) },
+            message_count: 0,
+            started_at,
+            updated_at: updated_at_val,
+            file_path: rollout_path,
+            version: cli_version,
+            provider: SessionProvider::Codex,
+        });
+    }
+
+    Ok(sessions)
+}
+
+fn scan_codex_sessions_local(workspace_path: &str) -> Result<Vec<Session>, String> {
     let db_path = codex_state_db_path()?;
     if !db_path.exists() {
         return Ok(Vec::new());
     }
 
     let conn = Connection::open(&db_path).map_err(|e| format!("Open Codex db: {}", e))?;
-    let workspace_candidates = path_candidates(&workspace_path);
+    let workspace_candidates: Vec<String> = path_candidates(&workspace_path);
     let mut stmt = conn
         .prepare(
             "select id, \

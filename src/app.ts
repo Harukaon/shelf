@@ -1,9 +1,9 @@
 import "@xterm/xterm/css/xterm.css";
 import { tauriInvoke, refreshIcons } from "./helpers";
-import { Session, TabInfo, SessionProvider, AiSessionMap, AiHistoryMessage, AiGroup, ShellCommandApproval } from "./types";
+import { Session, TabInfo, SessionProvider, SshTarget, AiSessionMap, AiHistoryMessage, AiGroup, ShellCommandApproval } from "./types";
 import { TabManager } from "./modules/tabs";
 import { WorkspaceManager } from "./modules/workspace";
-import { applyTerminalTheme, scheduleTerminalRefit, setTerminalThemeMode, type TerminalThemeMode } from "./modules/terminal";
+import { applyTerminalTheme, scheduleTerminalRefit, setTerminalThemeMode, createTerminalTab, type TerminalThemeMode } from "./modules/terminal";
 import { setupFileTreeContextMenu } from "./modules/files";
 import { setupDragDrop, setupPanelResize } from "./modules/dragdrop";
 import { t, setLang, getLang } from "./i18n";
@@ -111,6 +111,7 @@ class App {
       showContextMenu([
         { label: "Claude Code", action: () => this.ws.promptAdd("claude") },
         { label: "Codex", action: () => this.ws.promptAdd("codex") },
+        { label: "SSH", action: () => this._promptAddSshWorkspace() },
       ], rect.left, rect.top);
       e.stopPropagation();
     });
@@ -122,7 +123,7 @@ class App {
       this.terminalContainer,
       this.workspaceList,
       (path) => this._onTerminalDrop(path),
-      (path) => this.ws.add(path, "claude"),
+      (path) => this.ws.add(path, "claude").catch((e) => console.error("Add workspace failed:", e)),
     );
 
     setupPanelResize(
@@ -160,7 +161,7 @@ class App {
         getCurrentWebviewWindow().hide();
       }
     });
-    for (const ws of this.ws.workspaces) { await this._refreshWorkspaceSessions(ws.path, ws.provider, "init"); }
+    for (const ws of this.ws.workspaces) { await this._refreshWorkspaceSessions(ws.path, ws.provider, "init", ws.ssh); }
     await this._restoreSavedTabs();
     this._renderWorkspaces();
     this._setupWindowStateTracking();
@@ -384,7 +385,7 @@ class App {
     if (this._passiveTimer) clearInterval(this._passiveTimer);
     this._passiveTimer = setInterval(() => {
       for (const ws of this.ws.workspaces) {
-        this._refreshWorkspaceSessions(ws.path, ws.provider, "passive").catch(() => {});
+        this._refreshWorkspaceSessions(ws.path, ws.provider, "passive", ws.ssh).catch(() => {});
       }
     }, SESSION_POLL_INTERVAL_MS);
   }
@@ -393,12 +394,13 @@ class App {
     workspacePath: string,
     provider: SessionProvider,
     reason: "init" | "passive" | "manual" | "new-session" | "rename" | "delete",
+    ssh?: SshTarget,
   ): Promise<{ sessions: Session[]; changed: boolean }> {
     const key = this.ws.workspaceKey(workspacePath, provider);
     const seq = (this.sessionScanSeq.get(key) || 0) + 1;
     this.sessionScanSeq.set(key, seq);
     const command = provider === "codex" ? "scan_codex_sessions" : "scan_sessions";
-    const sessions = await tauriInvoke<Session[]>(command, { workspacePath }).catch((e) => {
+    const sessions = await tauriInvoke<Session[]>(command, { workspacePath, ssh: ssh || null }).catch((e) => {
       console.error(`Scan ${provider} sessions:`, e);
       return [];
     });
@@ -658,9 +660,37 @@ class App {
 
   private _renderProviderGroup(provider: SessionProvider, title: string): HTMLElement { return workspaceView._renderProviderGroup(this, provider, title); }
 
+  private _promptAddSshWorkspace() { return workspaceView._promptAddSshWorkspace(this); }
+
+  private _newSshClaudeSession(ws: import("./types").WorkspaceItem) {
+    const tabId = crypto.randomUUID();
+    const ssh = ws.ssh!;
+    const sshArgs = buildSshArgs(ssh, "claude");
+    const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
+      (id, data) => this._writePty(id, data),
+      { cwd: ws.path, workspacePath: ws.path, sessionProvider: "claude", command: { bin: "ssh", args: sshArgs }, ssh },
+    );
+    tab.sessionProvider = "claude";
+    this.tabs.addTab(tab);
+    this._scheduleSaveAppState();
+  }
+
+  private _newSshCodexSession(ws: import("./types").WorkspaceItem) {
+    const tabId = crypto.randomUUID();
+    const ssh = ws.ssh!;
+    const sshArgs = buildSshArgs(ssh, `codex -C ${ws.path}`);
+    const tab = createTerminalTab(tabId, t("tab.codex_new"), this.terminalContainer,
+      (id, data) => this._writePty(id, data),
+      { cwd: ws.path, workspacePath: ws.path, sessionProvider: "codex", command: { bin: "ssh", args: sshArgs }, ssh },
+    );
+    tab.sessionProvider = "codex";
+    this.tabs.addTab(tab);
+    this._scheduleSaveAppState();
+  }
+
   private _renderWorkspaceItem(ws: import("./types").WorkspaceItem): HTMLElement { return workspaceView._renderWorkspaceItem(this, ws); }
 
-  private _toggleWorkspaceExpansion(wsPath: string, provider: SessionProvider) { return workspaceView._toggleWorkspaceExpansion(this, wsPath, provider); }
+  private _toggleWorkspaceExpansion(wsPath: string, provider: SessionProvider, ssh?: SshTarget) { return workspaceView._toggleWorkspaceExpansion(this, wsPath, provider, ssh); }
 
   private _renderSessionItem(session: Session, wsPath: string, showProviderBadge = false): HTMLElement { return workspaceView._renderSessionItem(this, session, wsPath, showProviderBadge); }
 
@@ -668,6 +698,25 @@ class App {
   private _tabSortInProgress = false;
 
   private _renderTabs() { return workspaceView._renderTabs(this); }
+}
+
+function buildSshArgs(ssh: SshTarget, remoteCommand?: string): string[] {
+  const args: string[] = [];
+  args.push("-o", "StrictHostKeyChecking=accept-new");
+  args.push("-o", "ConnectTimeout=10");
+  args.push("-t");
+  if (ssh.port) {
+    args.push("-p", String(ssh.port));
+  }
+  if (ssh.identityFile) {
+    args.push("-i", ssh.identityFile);
+  }
+  const dest = ssh.user ? `${ssh.user}@${ssh.host}` : ssh.host;
+  args.push(dest);
+  if (remoteCommand) {
+    args.push("--", remoteCommand);
+  }
+  return args;
 }
 
 new App().init();

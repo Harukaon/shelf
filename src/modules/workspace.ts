@@ -1,6 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { tauriInvoke } from "../helpers";
-import { WorkspaceItem, Session, SessionProvider } from "../types";
+import { WorkspaceItem, Session, SessionProvider, SshTarget } from "../types";
 
 export class WorkspaceManager {
   workspaces: WorkspaceItem[] = [];
@@ -14,7 +14,7 @@ export class WorkspaceManager {
   constructor(
     private renderWorkspaces: () => void,
     private onSelectedChange?: (path: string | null) => void,
-    private scanWorkspace?: (path: string, provider: SessionProvider) => Promise<void>,
+    private scanWorkspace?: (path: string, provider: SessionProvider, ssh?: SshTarget) => Promise<void>,
   ) {}
 
   workspaceKey(path: string, provider: SessionProvider): string {
@@ -41,20 +41,17 @@ export class WorkspaceManager {
     }
   }
 
-  async add(path: string, provider: SessionProvider) {
-    try {
-      const ws = await tauriInvoke<WorkspaceItem>("add_workspace", { path, provider });
-      this.workspaces.push(ws);
-      this.expandedProviders.add(provider);
-      this.renderWorkspaces();
-    } catch (e) {
-      console.error("Add workspace:", e);
-    }
+  async add(path: string, provider: SessionProvider, ssh?: SshTarget) {
+    const ws = await tauriInvoke<WorkspaceItem>("add_workspace", { path, provider, ssh });
+    this.workspaces.push(ws);
+    this.expandedProviders.add(provider);
+    this.renderWorkspaces();
+    return ws;
   }
 
-  async remove(path: string, provider: SessionProvider) {
+  async remove(path: string, provider: SessionProvider, ssh?: SshTarget) {
     try {
-      await tauriInvoke("remove_workspace", { path, provider });
+      await tauriInvoke("remove_workspace", { path, provider, ssh });
       const key = this.workspaceKey(path, provider);
       this.workspaces = this.workspaces.filter((w) => !(w.path === path && w.provider === provider));
       this.sessions.delete(key);
@@ -80,10 +77,10 @@ export class WorkspaceManager {
     if (this.onSelectedChange) this.onSelectedChange(path);
   }
 
-  async scanSessions(workspacePath: string, provider: SessionProvider) {
+  async scanSessions(workspacePath: string, provider: SessionProvider, ssh?: SshTarget) {
     try {
       const command = provider === "codex" ? "scan_codex_sessions" : "scan_sessions";
-      const sessions = await tauriInvoke<Session[]>(command, { workspacePath });
+      const sessions = await tauriInvoke<Session[]>(command, { workspacePath, ssh: ssh || null });
       this.sessions.set(this.workspaceKey(workspacePath, provider), sessions);
     } catch (e) {
       console.error("Scan sessions:", e);
@@ -113,5 +110,13 @@ export class WorkspaceManager {
       for (const s of sList) all.push({ session: s, workspacePath });
     }
     return all;
+  }
+
+  get sshWorkspaces(): WorkspaceItem[] {
+    return this.workspaces.filter((w) => w.ssh);
+  }
+
+  get localWorkspaces(): WorkspaceItem[] {
+    return this.workspaces.filter((w) => !w.ssh);
   }
 }

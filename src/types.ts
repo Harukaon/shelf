@@ -1,10 +1,19 @@
 export type SessionProvider = "claude" | "codex";
 
+export interface SshTarget {
+  host: string;
+  user?: string;
+  port?: number;
+  identityFile?: string;
+  password?: string;
+}
+
 export interface WorkspaceItem {
   name: string;
   path: string;
   provider: SessionProvider;
   session_count: number;
+  ssh?: SshTarget;
 }
 
 export interface Session {

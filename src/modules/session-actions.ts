@@ -10,7 +10,7 @@ import {
   PENDING_SESSION_STABILIZE_MS,
   START_TAB_ID,
 } from "./app-constants";
-import type { FileEntry, Session, SessionProvider, TabInfo, WorkspaceItem } from "../types";
+import type { FileEntry, Session, SessionProvider, SshTarget, TabInfo, WorkspaceItem } from "../types";
 
 type PendingSessionTab = {
   workspacePath: string;
@@ -308,9 +308,30 @@ export function _openSessionTab(app: any, session: Session, wsPath: string) {
   }
   const tabId = crypto.randomUUID();
   const cwd = session.cwd || wsPath;
+  // Find the workspace to check if it's SSH
+  const ws = app.ws.workspaces.find((w: any) => w.path === wsPath);
   const command = session.provider === "codex"
     ? { bin: app.codexPath, args: ["resume", session.id, "-C", cwd] }
     : { bin: app.claudePath, args: ["--resume", session.id] };
+
+  // If workspace is SSH, spawn via SSH
+  if (ws?.ssh) {
+    const remoteCmd = session.provider === "codex"
+      ? `codex resume ${session.id} -C ${cwd}`
+      : `claude --resume ${session.id}`;
+    const sshArgs = buildSshArgs(ws.ssh, remoteCmd);
+    const tab = createTerminalTab(tabId, app._displayTitleForSession(session), app.terminalContainer,
+      (id, data) => app._writePty(id, data),
+      { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: wsPath, command: { bin: "ssh", args: sshArgs }, ssh: ws.ssh },
+    );
+    (tab as any).ssh = ws.ssh;
+    app.tabs.addTab(tab);
+    app.activeSessionIds.add(session.id);
+    app.focusedSessionId = session.id;
+    app._scheduleSaveAppState();
+    return;
+  }
+
   const tab = createTerminalTab(tabId, app._displayTitleForSession(session), app.terminalContainer,
     (id, data) => app._writePty(id, data),
     { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: wsPath, command },
@@ -368,7 +389,10 @@ export function _onWorkspaceSelected(app: any, newPath: string) {
 
 export async function _loadFileTree(app: any, path: string) {
   try {
-    const files = await tauriInvoke<FileEntry[]>("list_files", { path });
+    // Check if the selected workspace is SSH
+    const ws = app.ws.workspaces.find((w: any) => w.path === path && w.ssh);
+    const ssh = ws?.ssh || null;
+    const files = await tauriInvoke<FileEntry[]>("list_files", { path, ssh });
     app.expandedDirs.clear();
     app.loadedDirs.clear();
     clearFileCache();
@@ -384,4 +408,23 @@ export function _refreshCurrentFileTree(app: any) {
   if (!path) return;
   clearFileCache();
   app._loadFileTree(path);
+}
+
+function buildSshArgs(ssh: SshTarget, remoteCommand?: string): string[] {
+  const args: string[] = [];
+  args.push("-o", "StrictHostKeyChecking=accept-new");
+  args.push("-o", "ConnectTimeout=10");
+  args.push("-t");
+  if (ssh.port) {
+    args.push("-p", String(ssh.port));
+  }
+  if (ssh.identityFile) {
+    args.push("-i", ssh.identityFile);
+  }
+  const dest = ssh.user ? `${ssh.user}@${ssh.host}` : ssh.host;
+  args.push(dest);
+  if (remoteCommand) {
+    args.push("--", remoteCommand);
+  }
+  return args;
 }
