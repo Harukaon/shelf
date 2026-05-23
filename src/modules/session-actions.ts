@@ -5,6 +5,7 @@ import { clearFileCache, renderFileTree } from "./files";
 import { createTerminalTab, writeToPty } from "./terminal";
 import { showTerminalMenu } from "./pickers";
 import { openDialog } from "./dialog";
+import { showToast } from "./toast";
 import {
   PENDING_SESSION_DISCOVERY_TIMEOUT_MS,
   PENDING_SESSION_POLL_INTERVAL_MS,
@@ -68,17 +69,16 @@ export async function _deleteSession(app: any, session: Session, wsPath: string)
       if (tab.sessionId === session.id && tab.sessionProvider === session.provider) app.tabs.closeTab(id);
     }
     await app._refreshWorkspaceSessions(wsPath, session.provider, "delete");
-    app._showToast(t("toast.deleted"));
+    showToast(t("toast.deleted"), { variant: "success" });
     app._scheduleSaveAppState();
-  } catch (e) { console.error("Delete failed:", e); }
+  } catch (e) {
+    console.error("Delete failed:", e);
+    showToast(t("toast.delete_failed", String(e)), { variant: "error" });
+  }
 }
 
-export function _showToast(app: any, msg: string) {
-  const el = document.createElement("div");
-  el.className = "toast";
-  el.textContent = msg;
-  document.body.appendChild(el);
-  setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 300); }, 2500);
+export function _showToast(_app: any, msg: string) {
+  showToast(msg);
 }
 
 export async function _togglePin(app: any, session: Session) {
@@ -91,7 +91,10 @@ export async function _togglePin(app: any, session: Session) {
       app.pinnedIds.add(session.id);
     }
     app._renderWorkspaces();
-  } catch (e) { console.error("Pin toggle failed:", e); }
+  } catch (e) {
+    console.error("Pin toggle failed:", e);
+    showToast(t("toast.pin_failed", String(e)), { variant: "error" });
+  }
 }
 
 export async function _newClaudeSession(app: any, wsPath: string) {

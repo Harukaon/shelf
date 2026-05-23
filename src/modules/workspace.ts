@@ -1,5 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { tauriInvoke } from "../helpers";
+import { t } from "../i18n";
+import { showToast } from "./toast";
 import { WorkspaceItem, Session, SessionProvider, SshTarget } from "../types";
 
 export class WorkspaceManager {
@@ -33,11 +35,19 @@ export class WorkspaceManager {
   }
 
   async promptAdd(provider: SessionProvider) {
+    let selected: string | string[] | null = null;
     try {
-      const selected = await open({ directory: true, multiple: false, title: "Select Workspace Folder" });
-      if (selected && typeof selected === "string") await this.add(selected, provider);
+      selected = await open({ directory: true, multiple: false, title: "Select Workspace Folder" });
     } catch (e) {
       console.error("Folder picker:", e);
+      return;
+    }
+    if (!selected || typeof selected !== "string") return;
+    try {
+      await this.add(selected, provider);
+    } catch (e) {
+      console.error("Add workspace failed:", e);
+      showToast(t("toast.workspace_add_failed", String(e)), { variant: "error" });
     }
   }
 
@@ -60,6 +70,7 @@ export class WorkspaceManager {
       this.renderWorkspaces();
     } catch (e) {
       console.error("Remove workspace:", e);
+      showToast(t("toast.workspace_remove_failed", String(e)), { variant: "error" });
     }
   }
 

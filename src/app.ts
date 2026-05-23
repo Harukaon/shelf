@@ -12,6 +12,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import Sortable from "sortablejs";
 import { showContextMenu } from "./modules/context-menu";
 import { openDialog } from "./modules/dialog";
+import { showToast } from "./modules/toast";
 import { APP_THEMES, SESSION_POLL_INTERVAL_MS, START_TAB_ID, THEME_STORAGE_KEY, type AppTheme } from "./modules/app-constants";
 import * as settingsPanel from "./modules/settings-panel";
 import * as aiWindow from "./modules/ai-window";
@@ -124,7 +125,10 @@ class App {
       this.terminalContainer,
       this.workspaceList,
       (path) => this._onTerminalDrop(path),
-      (path) => this.ws.add(path, "claude").catch((e) => console.error("Add workspace failed:", e)),
+      (path) => this.ws.add(path, "claude").catch((e) => {
+        console.error("Add workspace failed:", e);
+        showToast(t("toast.workspace_add_failed", String(e)), { variant: "error" });
+      }),
     );
 
     setupPanelResize(
@@ -398,12 +402,17 @@ class App {
     const seq = (this.sessionScanSeq.get(key) || 0) + 1;
     this.sessionScanSeq.set(key, seq);
     const command = provider === "codex" ? "scan_codex_sessions" : "scan_sessions";
+    let scanError: unknown = null;
     const sessions = await tauriInvoke<Session[]>(command, { workspacePath, ssh: ssh || null }).catch((e) => {
       console.error(`Scan ${provider} sessions:`, e);
+      scanError = e;
       return [];
     });
     if (this.sessionScanSeq.get(key) !== seq) {
       return { sessions: this.ws.sessions.get(key) || [], changed: false };
+    }
+    if (scanError && (reason === "manual" || reason === "new-session")) {
+      showToast(`${t("toast.scan_failed")}: ${String(scanError)}`, { variant: "error" });
     }
     const changed = this._applySessionSnapshot(workspacePath, provider, sessions, reason);
     return { sessions, changed };
