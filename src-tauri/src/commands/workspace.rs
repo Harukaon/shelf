@@ -85,14 +85,18 @@ pub fn add_workspace(path: String, provider: Option<SessionProvider>, ssh: Optio
 
     let mut config = load_config();
 
-    // For SSH workspaces, uniqueness is by (host, path); for local by (path, provider)
+    // Uniqueness is by (path, provider, ssh-host?). Two workspaces pointing
+    // at the same remote path but with different providers (Claude vs Codex)
+    // are intentionally allowed; same provider on the same SSH host + path
+    // is a duplicate.
     let already_exists = if let Some(ref ssh_target) = ssh {
         config.workspaces.iter().any(|w| {
             w.path == path
+                && w.provider == provider
                 && w.ssh.as_ref().map_or(false, |s| s.host == ssh_target.host)
         })
     } else {
-        config.workspaces.iter().any(|w| w.path == path && w.provider == provider)
+        config.workspaces.iter().any(|w| w.path == path && w.provider == provider && w.ssh.is_none())
     };
 
     if already_exists {
@@ -111,10 +115,12 @@ pub fn remove_workspace(path: String, provider: Option<SessionProvider>, ssh: Op
     let mut config = load_config();
     if let Some(ref ssh_target) = ssh {
         config.workspaces.retain(|w| {
-            !(w.path == path && w.ssh.as_ref().map_or(false, |s| s.host == ssh_target.host))
+            !(w.path == path
+                && w.provider == provider
+                && w.ssh.as_ref().map_or(false, |s| s.host == ssh_target.host))
         });
     } else {
-        config.workspaces.retain(|w| !(w.path == path && w.provider == provider));
+        config.workspaces.retain(|w| !(w.path == path && w.provider == provider && w.ssh.is_none()));
     }
     save_config(&config)?;
     Ok(())
@@ -136,6 +142,7 @@ pub fn list_workspaces() -> Result<Vec<serde_json::Value>, String> {
             if let Some(ssh) = w.ssh {
                 val["ssh"] = serde_json::json!({
                     "host": ssh.host,
+                    "user": ssh.user,
                     "port": ssh.port,
                     "identityFile": ssh.identity_file,
                 });
