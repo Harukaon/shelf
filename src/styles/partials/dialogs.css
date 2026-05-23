@@ -333,6 +333,54 @@
 /* Generic dialog body wrapper */
 .dialog-body { display: contents; }
 
+/* Update notification dialog */
+.update-dialog-body { display: contents; }
+.update-dialog-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.update-dialog-version {
+  font-family: var(--font-mono);
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+}
+.update-dialog-version.latest {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.update-dialog-arrow { color: var(--text-muted); }
+.update-dialog-published { color: var(--text-muted); font-size: 11px; }
+.update-dialog-notes-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.update-dialog-notes {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* File preview */
 .file-preview-panel {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);

@@ -70,6 +70,15 @@ const dict: Record<string, Record<string, string>> = {
     "settings.language_en": "English",
     "settings.language_zh": "Chinese",
 
+    "update.title": "Update available",
+    "update.summary": "$1 → $2",
+    "update.published": "Published $1",
+    "update.notes_title": "Release notes",
+    "update.notes_empty": "No release notes.",
+    "update.go": "Go to release",
+    "update.skip": "Skip this version",
+    "update.later": "Remind me later",
+
     "ai.title": "AI Session Organizer",
     "ai.close": "Close",
     "ai.clear": "Clear chat history",
@@ -236,6 +245,15 @@ const dict: Record<string, Record<string, string>> = {
     "settings.ai_help": "支持 OpenAI 兼容服务和 Claude 端点。OpenAI 兼容模型加载会请求配置 Base URL 的 GET /models；Claude 使用 Anthropic 的 /v1/models 端点。",
     "settings.language_en": "英语",
     "settings.language_zh": "中文",
+
+    "update.title": "发现新版本",
+    "update.summary": "$1 → $2",
+    "update.published": "发布于 $1",
+    "update.notes_title": "更新内容",
+    "update.notes_empty": "暂无更新说明。",
+    "update.go": "去更新",
+    "update.skip": "跳过此版本",
+    "update.later": "我已知晓",
 
     "ai.title": "AI 会话整理",
     "ai.close": "关闭",

@@ -28,3 +28,4 @@ thiserror = "2"
 url = "2"
 futures-util = "0.3"
 tokio = { version = "1", features = ["io-util", "process", "time"] }
+reqwest = { version = "0.13", features = ["json"] }

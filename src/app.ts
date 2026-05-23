@@ -14,6 +14,7 @@ import { showContextMenu } from "./modules/context-menu";
 import { openDialog } from "./modules/dialog";
 import { showToast } from "./modules/toast";
 import { buildSshArgs, shQuote } from "./modules/ssh";
+import { scheduleUpdateCheck } from "./modules/update-check";
 import { APP_THEMES, SESSION_POLL_INTERVAL_MS, START_TAB_ID, THEME_STORAGE_KEY, type AppTheme } from "./modules/app-constants";
 import * as settingsPanel from "./modules/settings-panel";
 import * as aiWindow from "./modules/ai-window";
@@ -174,6 +175,7 @@ class App {
     this.appStateReady = true;
     this._scheduleSaveAppState();
     this._startPassivePolling();
+    scheduleUpdateCheck();
   }
 
   private async _loadClaudePath() {

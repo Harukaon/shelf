@@ -67,6 +67,7 @@ pub fn run() {
             commands::files::list_files,
             commands::files::read_text_file,
             commands::files::delete_file,
+            commands::update::check_for_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
