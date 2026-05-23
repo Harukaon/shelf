@@ -4,6 +4,7 @@ import { tauriInvoke } from "../helpers";
 import { t } from "../i18n";
 import { START_TAB_ID } from "./app-constants";
 import { createTerminalTab, scheduleTerminalRefit } from "./terminal";
+import { buildSshArgs, shQuote } from "./ssh";
 import type { SessionProvider, SshTarget, TabInfo } from "../types";
 
 export type SavedWindowState = {
@@ -206,7 +207,10 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       : { bin: app.claudePath, args: ["--resume", session.id] };
     // If this was an SSH session, spawn via SSH
     if (saved.ssh) {
-      const sshArgs = buildSshArgs(saved.ssh, command.bin + " " + command.args.join(" "));
+      const remoteCmd = session.provider === "codex"
+        ? `codex resume ${shQuote(session.id)} -C ${shQuote(cwd)}`
+        : `claude --resume ${shQuote(session.id)}`;
+      const sshArgs = buildSshArgs(saved.ssh, remoteCmd);
       return createTerminalTab(saved.id, app._displayTitleForSession(session) || saved.title, app.terminalContainer,
         (id, data) => app._writePty(id, data),
         { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh },
@@ -223,7 +227,7 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
     // If this was an SSH session, spawn via SSH
     if (saved.ssh) {
       const remoteCmd = saved.sessionProvider === "codex"
-        ? `codex -C ${saved.workspacePath}`
+        ? `codex -C ${shQuote(saved.workspacePath)}`
         : "claude";
       const sshArgs = buildSshArgs(saved.ssh, remoteCmd);
       const title = saved.title || t("ssh.new_shell");
@@ -269,23 +273,4 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       shell: saved.shell || app.shellSetting,
     },
   );
-}
-
-function buildSshArgs(ssh: SshTarget, remoteCommand?: string): string[] {
-  const args: string[] = [];
-  args.push("-o", "StrictHostKeyChecking=accept-new");
-  args.push("-o", "ConnectTimeout=10");
-  args.push("-t");
-  if (ssh.port) {
-    args.push("-p", String(ssh.port));
-  }
-  if (ssh.identityFile) {
-    args.push("-i", ssh.identityFile);
-  }
-  const dest = ssh.user ? `${ssh.user}@${ssh.host}` : ssh.host;
-  args.push(dest);
-  if (remoteCommand) {
-    args.push("--", remoteCommand);
-  }
-  return args;
 }

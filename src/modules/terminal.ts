@@ -52,13 +52,20 @@ function spawnCommandPty(
   command: { bin: string; args: string[] },
   options: TerminalTabOptions | undefined,
   terminal: Terminal,
-): { pty: IPty; fallbackShell: string; fallbackLine: string } {
+): { pty: IPty; fallbackShell?: string; fallbackLine?: string } {
   const spawnOpts: IPtyForkOptions = { cols: terminal.cols, rows: terminal.rows };
   if (options?.cwd) spawnOpts.cwd = options.cwd;
   if (shouldRemoveInheritedNoColor(options)) {
     spawnOpts.envRemove = ["NO_COLOR"];
   }
   const pty = spawn(command.bin, command.args, spawnOpts);
+  // SSH commands deliberately have no local fallback. Re-running the same
+  // `ssh user@host -- ...` command in a local login shell would just connect
+  // again and hit the same remote error; surface that error to the user
+  // instead so they can fix the remote PATH / install the missing binary.
+  if (options?.ssh) {
+    return { pty };
+  }
   return {
     pty,
     fallbackShell: fallbackShellForCommand(options),
@@ -403,7 +410,7 @@ export function createTerminalTab(
         console.log(`[Terminal] tab ${tabId} pid=${pid} ok`);
       })
       .catch((e: unknown) => {
-        if (commandFallback && !fallbackUsed) {
+        if (commandFallback?.fallbackShell && commandFallback.fallbackLine && !fallbackUsed) {
           fallbackUsed = true;
           console.warn(`[Terminal] tab ${tabId} direct command spawn failed, falling back to shell:`, e);
           terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
@@ -431,7 +438,7 @@ export function createTerminalTab(
           tabInfo.hasUnreadOutput = true;
           options?.onUnreadChange?.(tabId, true);
         }
-        if (!fallback && commandFallback && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS) {
+        if (!fallback && commandFallback?.fallbackShell && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS) {
           earlyOutput += decoder.decode(data, { stream: true });
           if (earlyOutput.length > COMMAND_FALLBACK_MAX_OUTPUT) {
             earlyOutput = earlyOutput.slice(-COMMAND_FALLBACK_MAX_OUTPUT);
@@ -439,7 +446,7 @@ export function createTerminalTab(
         }
       });
       boundPty.onExit((exit) => {
-        if (!fallback && commandFallback && !fallbackUsed && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS && shouldFallbackCommand(earlyOutput, exit.exitCode)) {
+        if (!fallback && commandFallback?.fallbackShell && commandFallback.fallbackLine && !fallbackUsed && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS && shouldFallbackCommand(earlyOutput, exit.exitCode)) {
           fallbackUsed = true;
           console.warn(`[Terminal] tab ${tabId} command exited early with environment error, falling back to shell.`);
           terminal.write("\r\nFalling back to login shell.\r\n");

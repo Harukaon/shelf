@@ -13,6 +13,7 @@ import Sortable from "sortablejs";
 import { showContextMenu } from "./modules/context-menu";
 import { openDialog } from "./modules/dialog";
 import { showToast } from "./modules/toast";
+import { buildSshArgs, shQuote } from "./modules/ssh";
 import { APP_THEMES, SESSION_POLL_INTERVAL_MS, START_TAB_ID, THEME_STORAGE_KEY, type AppTheme } from "./modules/app-constants";
 import * as settingsPanel from "./modules/settings-panel";
 import * as aiWindow from "./modules/ai-window";
@@ -685,7 +686,7 @@ class App {
   private _newSshCodexSession(ws: import("./types").WorkspaceItem) {
     const tabId = crypto.randomUUID();
     const ssh = ws.ssh!;
-    const sshArgs = buildSshArgs(ssh, `codex -C ${ws.path}`);
+    const sshArgs = buildSshArgs(ssh, `codex -C ${shQuote(ws.path)}`);
     const tab = createTerminalTab(tabId, t("tab.codex_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
       { cwd: ws.path, workspacePath: ws.path, sessionProvider: "codex", command: { bin: "ssh", args: sshArgs }, ssh },
@@ -705,25 +706,6 @@ class App {
   private _tabSortInProgress = false;
 
   private _renderTabs() { return workspaceView._renderTabs(this); }
-}
-
-function buildSshArgs(ssh: SshTarget, remoteCommand?: string): string[] {
-  const args: string[] = [];
-  args.push("-o", "StrictHostKeyChecking=accept-new");
-  args.push("-o", "ConnectTimeout=10");
-  args.push("-t");
-  if (ssh.port) {
-    args.push("-p", String(ssh.port));
-  }
-  if (ssh.identityFile) {
-    args.push("-i", ssh.identityFile);
-  }
-  const dest = ssh.user ? `${ssh.user}@${ssh.host}` : ssh.host;
-  args.push(dest);
-  if (remoteCommand) {
-    args.push("--", remoteCommand);
-  }
-  return args;
 }
 
 new App().init();

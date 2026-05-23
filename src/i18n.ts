@@ -10,6 +10,7 @@ const dict: Record<string, Record<string, string>> = {
 
     "workspace.add": "+ Add Workspace",
     "workspace.remove": "Remove workspace",
+    "workspace.confirm_remove": "Click again to remove",
     "workspace.new": "New session",
     "workspace.refresh": "↻",
     "workspace.pinned": "Pinned",
@@ -170,6 +171,7 @@ const dict: Record<string, Record<string, string>> = {
 
     "workspace.add": "+ 添加工作区",
     "workspace.remove": "移除工作区",
+    "workspace.confirm_remove": "再次点击移除",
     "workspace.new": "新建会话",
     "workspace.refresh": "↻",
     "workspace.pinned": "已置顶",

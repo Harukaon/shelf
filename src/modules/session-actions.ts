@@ -6,6 +6,7 @@ import { createTerminalTab, writeToPty } from "./terminal";
 import { showTerminalMenu } from "./pickers";
 import { openDialog, confirmDialog } from "./dialog";
 import { showToast } from "./toast";
+import { buildSshArgs, shQuote } from "./ssh";
 import {
   PENDING_SESSION_DISCOVERY_TIMEOUT_MS,
   PENDING_SESSION_POLL_INTERVAL_MS,
@@ -321,8 +322,8 @@ export function _openSessionTab(app: any, session: Session, wsPath: string) {
   // If workspace is SSH, spawn via SSH
   if (ws?.ssh) {
     const remoteCmd = session.provider === "codex"
-      ? `codex resume ${session.id} -C ${cwd}`
-      : `claude --resume ${session.id}`;
+      ? `codex resume ${shQuote(session.id)} -C ${shQuote(cwd)}`
+      : `claude --resume ${shQuote(session.id)}`;
     const sshArgs = buildSshArgs(ws.ssh, remoteCmd);
     const tab = createTerminalTab(tabId, app._displayTitleForSession(session), app.terminalContainer,
       (id, data) => app._writePty(id, data),
@@ -419,23 +420,4 @@ export function _refreshCurrentFileTree(app: any) {
   if (!path) return;
   clearFileCache();
   app._loadFileTree(path);
-}
-
-function buildSshArgs(ssh: SshTarget, remoteCommand?: string): string[] {
-  const args: string[] = [];
-  args.push("-o", "StrictHostKeyChecking=accept-new");
-  args.push("-o", "ConnectTimeout=10");
-  args.push("-t");
-  if (ssh.port) {
-    args.push("-p", String(ssh.port));
-  }
-  if (ssh.identityFile) {
-    args.push("-i", ssh.identityFile);
-  }
-  const dest = ssh.user ? `${ssh.user}@${ssh.host}` : ssh.host;
-  args.push(dest);
-  if (remoteCommand) {
-    args.push("--", remoteCommand);
-  }
-  return args;
 }

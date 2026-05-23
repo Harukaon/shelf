@@ -59,36 +59,9 @@
   background: none; border: none; color: var(--red);
   cursor: pointer; padding: 0 4px; opacity: 0.5;
   display: flex; align-items: center;
-  transition: opacity 0.1s, background 0.1s;
 }
 .ws-remove-btn:hover { opacity: 1; }
-.ws-remove-btn.pending {
-  opacity: 1;
-  background: var(--red);
-  color: var(--bg-primary);
-  border-radius: 3px;
-  padding: 2px 6px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
-  position: relative;
-  overflow: hidden;
-}
-.ws-remove-btn.pending::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 2px;
-  width: 100%;
-  background: color-mix(in srgb, white 60%, var(--red));
-  transform-origin: left;
-  animation: ws-remove-countdown 3s linear forwards;
-}
-@keyframes ws-remove-countdown {
-  from { transform: scaleX(1); }
-  to { transform: scaleX(0); }
-}
+.ws-remove-btn.pending { opacity: 1; }
 
 .ws-new-btn {
   background: none; border: none;

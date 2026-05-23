@@ -274,7 +274,6 @@ export function _renderWorkspaceItem(app: any, ws: WorkspaceItem): HTMLElement {
     if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
     removeBtn.classList.remove("pending");
     removeBtn.innerHTML = '<i data-lucide="trash-2"></i>';
-    removeBtn.removeAttribute("title");
     removeBtn.setAttribute("title", t("workspace.remove"));
     refreshIcons();
   };
@@ -299,16 +298,11 @@ export function _renderWorkspaceItem(app: any, ws: WorkspaceItem): HTMLElement {
     } else {
       deletePending = true;
       removeBtn.classList.add("pending");
-      removeBtn.textContent = t("confirm.delete");
-      removeBtn.setAttribute("title", t("confirm.workspace_countdown", "3"));
+      removeBtn.innerHTML = '<i data-lucide="x"></i>';
+      removeBtn.setAttribute("title", t("workspace.confirm_remove"));
+      refreshIcons();
       pendingTimer = setTimeout(resetRemoveBtn, 3000);
     }
-  });
-  removeBtn.addEventListener("mouseleave", () => {
-    if (!deletePending) return;
-    // give a small grace period; reset after 1.2s on mouse leave
-    if (pendingTimer) clearTimeout(pendingTimer);
-    pendingTimer = setTimeout(resetRemoveBtn, 1200);
   });
   header.addEventListener("click", () => {
     app._toggleWorkspaceExpansion(ws.path, ws.provider, ws.ssh);
