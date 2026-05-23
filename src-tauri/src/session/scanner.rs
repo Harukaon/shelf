@@ -41,7 +41,17 @@ pub fn scan_sessions(workspace_path: &str) -> Result<Vec<Session>, String> {
 fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
     let content = fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
 
-    let mut session_id = String::new();
+    // The filename is `<uuid>.jsonl`, so use that as the authoritative session
+    // id. Claude writes a few non-user lines (permission-mode, file-history-
+    // snapshot, ...) before the first user message, and previously we waited
+    // until we saw a `type:"user"` line to harvest the session id — which
+    // meant freshly-spawned sessions stayed invisible until the user actually
+    // typed something, and the "+ new claude" pending tab never linked.
+    let mut session_id = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
     let mut cwd = String::new();
     let mut custom_title: Option<String> = None;
     let mut ai_title: Option<String> = None;
@@ -59,7 +69,6 @@ fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        message_count += 1;
         if let Some(timestamp) = value["timestamp"].as_str() {
             if let Ok(parsed) = DateTime::parse_from_rfc3339(timestamp) {
                 let parsed_utc = parsed.with_timezone(&Utc);
@@ -71,6 +80,7 @@ fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
 
         match msg_type {
             "user" => {
+                message_count += 1;
                 if first_prompt.is_none() {
                     if let Some(content) = value["message"]["content"].as_str() {
                         let trimmed = content.trim();
@@ -82,9 +92,6 @@ fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
                         });
                     }
                 }
-                if session_id.is_empty() {
-                    session_id = value["sessionId"].as_str().unwrap_or("").to_string();
-                }
                 if cwd.is_empty() {
                     cwd = value["cwd"].as_str().unwrap_or("").to_string();
                 }
@@ -94,6 +101,9 @@ fn parse_session_file(path: &PathBuf) -> Result<Option<Session>, String> {
                 if version.is_empty() {
                     version = value["version"].as_str().unwrap_or("").to_string();
                 }
+            }
+            "assistant" => {
+                message_count += 1;
             }
             "custom-title" => {
                 custom_title = value["customTitle"].as_str().map(|s| s.to_string());

@@ -75,7 +75,11 @@ fn scan_sessions_remote(workspace_path: &str, ssh_target: &SshTarget) -> Result<
 }
 
 fn parse_remote_session_file(content: &str, filename: &str, _ssh_target: &SshTarget) -> Result<Option<Session>, String> {
-    let mut session_id = String::new();
+    // Use the filename (`<uuid>.jsonl`) as the authoritative session id so we
+    // can surface sessions that exist on disk but haven't had a `type:"user"`
+    // line written yet (claude writes permission-mode / file-history-snapshot
+    // first; without this, the "+ new claude" pending tab never linked).
+    let mut session_id = filename.trim_end_matches(".jsonl").to_string();
     let mut cwd = String::new();
     let mut custom_title: Option<String> = None;
     let mut ai_title: Option<String> = None;
@@ -92,7 +96,6 @@ fn parse_remote_session_file(content: &str, filename: &str, _ssh_target: &SshTar
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        message_count += 1;
         if let Some(timestamp) = value["timestamp"].as_str() {
             if let Ok(parsed) = DateTime::parse_from_rfc3339(timestamp) {
                 let parsed_utc = parsed.with_timezone(&Utc);
@@ -104,6 +107,7 @@ fn parse_remote_session_file(content: &str, filename: &str, _ssh_target: &SshTar
 
         match msg_type {
             "user" => {
+                message_count += 1;
                 if first_prompt.is_none() {
                     if let Some(content) = value["message"]["content"].as_str() {
                         let trimmed = content.trim();
@@ -115,9 +119,6 @@ fn parse_remote_session_file(content: &str, filename: &str, _ssh_target: &SshTar
                         });
                     }
                 }
-                if session_id.is_empty() {
-                    session_id = value["sessionId"].as_str().unwrap_or("").to_string();
-                }
                 if cwd.is_empty() {
                     cwd = value["cwd"].as_str().unwrap_or("").to_string();
                 }
@@ -127,6 +128,9 @@ fn parse_remote_session_file(content: &str, filename: &str, _ssh_target: &SshTar
                 if version.is_empty() {
                     version = value["version"].as_str().unwrap_or("").to_string();
                 }
+            }
+            "assistant" => {
+                message_count += 1;
             }
             "custom-title" => {
                 custom_title = value["customTitle"].as_str().map(|s| s.to_string());
