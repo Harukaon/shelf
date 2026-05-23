@@ -140,6 +140,49 @@ pub async fn ssh_test_connection(ssh: SshTarget) -> Result<String, String> {
         .map_err(|e| format!("SSH test failed: {}", e))?
 }
 
+/// Resolve a remote path (which may contain `~`, `..`, or be relative) to an
+/// absolute, canonical path by running `cd <path> && pwd -P` on the remote.
+#[tauri::command]
+pub async fn ssh_resolve_path(ssh: SshTarget, path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let trimmed = path.trim();
+        let target = if trimmed.is_empty() { "~" } else { trimmed };
+        // Build a remote command that quotes safely while still letting the
+        // remote shell expand a leading `~`. We translate:
+        //   "~"           -> `cd && pwd -P`
+        //   "~/foo bar"   -> `cd && cd 'foo bar' && pwd -P`
+        //   "~user/foo"   -> `cd ~user/'foo' && pwd -P`   (left to shell)
+        //   "/abs/path"   -> `cd '/abs/path' && pwd -P`
+        //   "relative"    -> `cd 'relative' && pwd -P`
+        let cmd = if target == "~" {
+            "cd && pwd -P".to_string()
+        } else if let Some(rest) = target.strip_prefix("~/") {
+            let quoted_rest = rest.replace('\'', r"'\''");
+            format!("cd && cd './{}' 2>/dev/null && pwd -P", quoted_rest)
+        } else if let Some(rest) = target.strip_prefix('~') {
+            // ~user form — leave the ~user prefix unquoted so the shell can
+            // resolve the user, but quote the remainder.
+            let (user, after_slash) = rest.split_once('/').unwrap_or((rest, ""));
+            if after_slash.is_empty() {
+                format!("cd ~{} 2>/dev/null && pwd -P", user)
+            } else {
+                let quoted_rest = after_slash.replace('\'', r"'\''");
+                format!("cd ~{}/'{}' 2>/dev/null && pwd -P", user, quoted_rest)
+            }
+        } else {
+            let quoted = target.replace('\'', r"'\''");
+            format!("cd '{}' 2>/dev/null && pwd -P", quoted)
+        };
+        let result = ssh_exec(&ssh, &cmd)?;
+        if result.is_empty() {
+            return Err(format!("Cannot resolve remote path '{}'", target));
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|e| format!("SSH resolve failed: {}", e))?
+}
+
 /// Parse ~/.ssh/config and return host entries with full details.
 #[tauri::command]
 pub fn ssh_list_config_hosts() -> Result<Vec<SshConfigEntry>, String> {

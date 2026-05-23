@@ -695,29 +695,44 @@ export async function _promptAddSshWorkspace(app: any): Promise<void> {
 
   let currentBrowsePath = "";
   let browseSeq = 0;
-  const loadRemoteDir = async (dirPath: string) => {
+  const computeParent = (absPath: string): string | null => {
+    if (!absPath.startsWith("/")) return null;
+    const trimmed = absPath.replace(/\/+$/, "") || "/";
+    if (trimmed === "/") return null;
+    const idx = trimmed.lastIndexOf("/");
+    if (idx <= 0) return "/";
+    return trimmed.slice(0, idx);
+  };
+  const loadRemoteDir = async (rawPath: string) => {
     const ssh = requireHost();
     if (!ssh) return;
     const seq = ++browseSeq;
     browseEl.classList.add("show");
-    browsePathEl.textContent = dirPath;
+    browsePathEl.textContent = rawPath;
     browseSelectBtn.disabled = true;
     browseBtn.disabled = true;
     browseListEl.innerHTML = `<div class="ssh-browse-state"><i data-lucide="loader" class="spin" style="width:12px;height:12px;"></i> ${escapeHtml(t("ssh.loading_dir"))}</div>`;
     refreshIcons();
     try {
+      // Resolve relative / ~ paths to a canonical absolute path so navigation
+      // and parent computation work uniformly.
+      let canonical = rawPath;
+      if (!rawPath.startsWith("/")) {
+        canonical = await tauriInvoke<string>("ssh_resolve_path", { ssh, path: rawPath });
+      }
+      if (seq !== browseSeq) return;
       const entries = await tauriInvoke<Array<{ name: string; is_dir: boolean; path: string }>>(
         "list_files",
-        { path: dirPath, ssh },
+        { path: canonical, ssh },
       );
       if (seq !== browseSeq) return;
-      currentBrowsePath = dirPath;
-      browsePathEl.textContent = dirPath;
+      currentBrowsePath = canonical;
+      browsePathEl.textContent = canonical;
       browseSelectBtn.disabled = false;
       browseListEl.innerHTML = "";
 
-      if (dirPath !== "/" && dirPath !== "~") {
-        const parent = dirPath.replace(/\/[^/]+\/?$/, "") || "/";
+      const parent = computeParent(canonical);
+      if (parent !== null) {
         const parentEl = document.createElement("div");
         parentEl.className = "ssh-browse-item parent";
         parentEl.innerHTML = `<i data-lucide="corner-up-left" style="width:12px;height:12px;"></i> <span>..</span>`;
@@ -736,7 +751,7 @@ export async function _promptAddSshWorkspace(app: any): Promise<void> {
         hasEntry = true;
         const item = document.createElement("div");
         item.className = `ssh-browse-item ${entry.is_dir ? "dir" : "file"}`;
-        const childPath = entry.path || `${dirPath.replace(/\/$/, "")}/${entry.name}`;
+        const childPath = entry.path || `${canonical.replace(/\/$/, "")}/${entry.name}`;
         item.title = childPath;
         const iconName = entry.is_dir ? "folder" : "file";
         item.innerHTML = `<i data-lucide="${iconName}" style="width:12px;height:12px;"></i> <span>${escapeHtml(entry.name)}</span>`;
@@ -746,7 +761,7 @@ export async function _promptAddSshWorkspace(app: any): Promise<void> {
         browseListEl.appendChild(item);
       }
 
-      if (!hasEntry && browseListEl.children.length === 0) {
+      if (!hasEntry && browseListEl.children.length === (parent !== null ? 1 : 0)) {
         const emptyEl = document.createElement("div");
         emptyEl.className = "ssh-browse-state";
         emptyEl.textContent = t("ssh.empty_dir");

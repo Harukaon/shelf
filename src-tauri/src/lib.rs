@@ -40,6 +40,7 @@ pub fn run() {
             commands::ai::list_ai_models,
             commands::ai::run_ai_organizer,
             commands::ssh::ssh_test_connection,
+            commands::ssh::ssh_resolve_path,
             commands::ssh::ssh_list_config_hosts,
             commands::ssh::ssh_find_command,
             commands::ssh::ssh_get_history,
