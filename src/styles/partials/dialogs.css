@@ -2,8 +2,23 @@
 .settings-panel {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
   background: var(--bg-secondary); border: 1px solid var(--border);
-  border-radius: 10px; padding: 20px; min-width: 360px; max-width: min(560px, calc(100vw - 40px)); z-index: 1001;
+  border-radius: 10px; padding: 20px; min-width: 360px; max-width: min(560px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  z-index: 1001;
   box-shadow: 0 12px 40px var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+.settings-panel > .settings-title,
+.settings-panel > .settings-actions,
+.settings-panel > .settings-note,
+.settings-panel > .dialog-status { flex-shrink: 0; }
+.settings-panel > .dialog-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 -20px;
+  padding: 0 20px;
 }
 .settings-title { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary); }
 .settings-section-title {

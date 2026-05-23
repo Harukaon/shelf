@@ -537,49 +537,51 @@ export async function _promptAddSshWorkspace(app: any): Promise<void> {
 
   panel.innerHTML = `
     <div class="settings-title">${t("ssh.add_title")}</div>
-    ${quickSelectHtml}
-    ${historyHtml}
-    <div class="settings-section-title">${t("ssh.connection_info")}</div>
-    <div class="settings-row">
-      <label>${t("ssh.host")}</label>
-      <input id="ssh-host" placeholder="${t("ssh.host_placeholder")}" autofocus>
-    </div>
-    <div class="settings-row">
-      <label>${t("ssh.username")}</label>
-      <input id="ssh-user" placeholder="root">
-      <label style="margin-left:8px;">${t("ssh.port")}</label>
-      <input id="ssh-port" type="number" value="22" min="1" max="65535" style="width:70px;flex:0 0 auto;">
-    </div>
-    <div class="settings-row">
-      <label>${t("ssh.identity_file")}</label>
-      <input id="ssh-key" placeholder="${t("ssh.identity_placeholder")}">
-    </div>
-    <div class="settings-row">
-      <label>${t("ssh.password")}</label>
-      <input id="ssh-password" type="password" placeholder="${t("ssh.password_placeholder")}">
-    </div>
-    <div class="settings-section-title">${t("ssh.workspace_info")}</div>
-    <div class="settings-row">
-      <label>${t("ssh.provider")}</label>
-      <select id="ssh-provider">
-        <option value="claude">Claude Code</option>
-        <option value="codex">Codex</option>
-      </select>
-    </div>
-    <div class="settings-row">
-      <label>${t("ssh.remote_path")}</label>
-      <div class="settings-inline-actions" style="flex:1;">
-        <input id="ssh-remote-path" placeholder="${t("ssh.remote_path_placeholder")}">
-        <button id="ssh-browse-btn" type="button">${t("ssh.browse")}</button>
+    <div class="dialog-scroll">
+      ${quickSelectHtml}
+      ${historyHtml}
+      <div class="settings-section-title">${t("ssh.connection_info")}</div>
+      <div class="settings-row">
+        <label>${t("ssh.host")}</label>
+        <input id="ssh-host" placeholder="${t("ssh.host_placeholder")}" autofocus>
       </div>
-    </div>
-    <div id="ssh-browse" class="ssh-browse">
-      <div class="ssh-browse-header">
-        <span class="ssh-browse-path" id="ssh-browse-path"></span>
-        <button class="ssh-browse-select-btn" id="ssh-browse-select" type="button">${t("ssh.select_dir")}</button>
+      <div class="settings-row">
+        <label>${t("ssh.username")}</label>
+        <input id="ssh-user" placeholder="root">
+        <label style="margin-left:8px;">${t("ssh.port")}</label>
+        <input id="ssh-port" type="number" value="22" min="1" max="65535" style="width:70px;flex:0 0 auto;">
       </div>
-      <div class="ssh-browse-list" id="ssh-browse-list"></div>
-      <div class="ssh-browse-hint">${t("ssh.browse_hint")}</div>
+      <div class="settings-row">
+        <label>${t("ssh.identity_file")}</label>
+        <input id="ssh-key" placeholder="${t("ssh.identity_placeholder")}">
+      </div>
+      <div class="settings-row">
+        <label>${t("ssh.password")}</label>
+        <input id="ssh-password" type="password" placeholder="${t("ssh.password_placeholder")}">
+      </div>
+      <div class="settings-section-title">${t("ssh.workspace_info")}</div>
+      <div class="settings-row">
+        <label>${t("ssh.provider")}</label>
+        <select id="ssh-provider">
+          <option value="claude">Claude Code</option>
+          <option value="codex">Codex</option>
+        </select>
+      </div>
+      <div class="settings-row">
+        <label>${t("ssh.remote_path")}</label>
+        <div class="settings-inline-actions" style="flex:1;">
+          <input id="ssh-remote-path" placeholder="${t("ssh.remote_path_placeholder")}">
+          <button id="ssh-browse-btn" type="button">${t("ssh.browse")}</button>
+        </div>
+      </div>
+      <div id="ssh-browse" class="ssh-browse">
+        <div class="ssh-browse-header">
+          <span class="ssh-browse-path" id="ssh-browse-path"></span>
+          <button class="ssh-browse-select-btn" id="ssh-browse-select" type="button">${t("ssh.select_dir")}</button>
+        </div>
+        <div class="ssh-browse-list" id="ssh-browse-list"></div>
+        <div class="ssh-browse-hint">${t("ssh.browse_hint")}</div>
+      </div>
     </div>
     <div id="ssh-status" class="dialog-status"></div>
     <div class="settings-actions">

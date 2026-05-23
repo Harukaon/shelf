@@ -9,49 +9,51 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
   panel.className = "settings-panel";
   panel.innerHTML = `
     <div class="settings-title">${t("settings.title")}</div>
-    <div class="settings-section-title">${t("settings.general_title")}</div>
-    <div class="settings-row"><label>${t("settings.shell")}</label><select id="settings-shell"></select></div>
-    <div class="settings-row"><label>${t("settings.language")}</label>
-      <select id="settings-lang">
-        <option value="en">${t("settings.language_en")}</option>
-        <option value="zh">${t("settings.language_zh")}</option>
-      </select>
-    </div>
-    <div class="settings-row"><label>${t("settings.theme")}</label>
-      <select id="settings-theme">
-        <option value="dark">${t("settings.theme_dark")}</option>
-        <option value="light">${t("settings.theme_light")}</option>
-        <option value="github-light">${t("settings.theme_github_light")}</option>
-        <option value="solarized-light">${t("settings.theme_solarized_light")}</option>
-        <option value="dracula">${t("settings.theme_dracula")}</option>
-        <option value="monokai">${t("settings.theme_monokai")}</option>
-      </select>
-    </div>
-    <div class="settings-section-title">${t("settings.ai_title")}</div>
-    <div class="settings-note">${t("settings.ai_help")}</div>
-    <div class="settings-row stacked">
-      <label for="settings-ai-endpoint">${t("settings.ai_endpoint")}</label>
-      <select id="settings-ai-endpoint">
-        <option value="openAi">${t("settings.ai_endpoint_openai")}</option>
-        <option value="claude">${t("settings.ai_endpoint_claude")}</option>
-      </select>
-    </div>
-    <div class="settings-row stacked">
-      <label for="settings-ai-base-url">${t("settings.ai_base_url")}</label>
-      <input id="settings-ai-base-url" placeholder="https://api.openai.com/v1">
-    </div>
-    <div class="settings-row stacked">
-      <label for="settings-ai-api-key">${t("settings.ai_api_key")}</label>
-      <input id="settings-ai-api-key" type="password" placeholder="sk-...">
-    </div>
-    <div class="settings-row stacked">
-      <label for="settings-ai-model">${t("settings.ai_model")}</label>
-      <div class="settings-inline-actions">
-        <input id="settings-ai-model" placeholder="${t("settings.ai_model_placeholder")}">
-        <button id="settings-ai-load-models" type="button">${t("settings.ai_load_models")}</button>
+    <div class="dialog-scroll">
+      <div class="settings-section-title">${t("settings.general_title")}</div>
+      <div class="settings-row"><label>${t("settings.shell")}</label><select id="settings-shell"></select></div>
+      <div class="settings-row"><label>${t("settings.language")}</label>
+        <select id="settings-lang">
+          <option value="en">${t("settings.language_en")}</option>
+          <option value="zh">${t("settings.language_zh")}</option>
+        </select>
       </div>
-      <div class="settings-model-list hidden" id="settings-ai-model-list"></div>
-      <div class="settings-status" id="settings-ai-model-status"></div>
+      <div class="settings-row"><label>${t("settings.theme")}</label>
+        <select id="settings-theme">
+          <option value="dark">${t("settings.theme_dark")}</option>
+          <option value="light">${t("settings.theme_light")}</option>
+          <option value="github-light">${t("settings.theme_github_light")}</option>
+          <option value="solarized-light">${t("settings.theme_solarized_light")}</option>
+          <option value="dracula">${t("settings.theme_dracula")}</option>
+          <option value="monokai">${t("settings.theme_monokai")}</option>
+        </select>
+      </div>
+      <div class="settings-section-title">${t("settings.ai_title")}</div>
+      <div class="settings-note">${t("settings.ai_help")}</div>
+      <div class="settings-row stacked">
+        <label for="settings-ai-endpoint">${t("settings.ai_endpoint")}</label>
+        <select id="settings-ai-endpoint">
+          <option value="openAi">${t("settings.ai_endpoint_openai")}</option>
+          <option value="claude">${t("settings.ai_endpoint_claude")}</option>
+        </select>
+      </div>
+      <div class="settings-row stacked">
+        <label for="settings-ai-base-url">${t("settings.ai_base_url")}</label>
+        <input id="settings-ai-base-url" placeholder="https://api.openai.com/v1">
+      </div>
+      <div class="settings-row stacked">
+        <label for="settings-ai-api-key">${t("settings.ai_api_key")}</label>
+        <input id="settings-ai-api-key" type="password" placeholder="sk-...">
+      </div>
+      <div class="settings-row stacked">
+        <label for="settings-ai-model">${t("settings.ai_model")}</label>
+        <div class="settings-inline-actions">
+          <input id="settings-ai-model" placeholder="${t("settings.ai_model_placeholder")}">
+          <button id="settings-ai-load-models" type="button">${t("settings.ai_load_models")}</button>
+        </div>
+        <div class="settings-model-list hidden" id="settings-ai-model-list"></div>
+        <div class="settings-status" id="settings-ai-model-status"></div>
+      </div>
     </div>
     <div class="settings-actions">
       <button id="settings-save">${t("settings.save")}</button>

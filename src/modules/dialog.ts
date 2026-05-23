@@ -43,18 +43,22 @@ export function openDialog(opts: DialogOptions): DialogHandle {
   title.textContent = opts.title;
   panel.appendChild(title);
 
+  const scroll = document.createElement("div");
+  scroll.className = "dialog-scroll";
+  panel.appendChild(scroll);
+
   if (opts.description) {
     const desc = document.createElement("p");
     desc.className = "settings-note";
     desc.textContent = opts.description;
-    panel.appendChild(desc);
+    scroll.appendChild(desc);
   }
 
   const body = document.createElement("div");
   body.className = "dialog-body";
   if (typeof opts.body === "string") body.innerHTML = opts.body;
   else if (opts.body) body.appendChild(opts.body);
-  panel.appendChild(body);
+  scroll.appendChild(body);
 
   const status = document.createElement("div");
   status.className = "dialog-status";
