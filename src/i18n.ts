@@ -110,6 +110,7 @@ const dict: Record<string, Record<string, string>> = {
     "context.pin": "Pin to Top",
     "context.unpin": "Unpin",
     "toast.deleted": "Session moved to trash",
+    "toast.deleted_ssh": "Remote session deleted",
     "toast.delete_failed": "Failed to delete session: $1",
     "toast.pin_failed": "Failed to toggle pin: $1",
     "toast.session_create_failed": "Failed to create session: $1",
@@ -120,6 +121,7 @@ const dict: Record<string, Record<string, string>> = {
 
     "confirm.delete_session_title": "Delete this session?",
     "confirm.delete_session_message": "\"$1\" will be moved to trash. Active tabs for this session will close.",
+    "confirm.delete_session_ssh_message": "\"$1\" will be permanently deleted on the remote host. This cannot be undone.",
     "confirm.delete_category_title": "Delete this category?",
     "confirm.delete_category_message": "All session mappings in \"$1\" will be removed. The underlying sessions are kept.",
     "confirm.delete": "Delete",
@@ -272,6 +274,7 @@ const dict: Record<string, Record<string, string>> = {
     "context.pin": "置顶",
     "context.unpin": "取消置顶",
     "toast.deleted": "会话记录已移动到回收站",
+    "toast.deleted_ssh": "远程会话已删除",
     "toast.delete_failed": "删除会话失败：$1",
     "toast.pin_failed": "切换置顶失败：$1",
     "toast.session_create_failed": "创建会话失败：$1",
@@ -282,6 +285,7 @@ const dict: Record<string, Record<string, string>> = {
 
     "confirm.delete_session_title": "删除该会话？",
     "confirm.delete_session_message": "「$1」 会被移到回收站，相关的标签页会关闭。",
+    "confirm.delete_session_ssh_message": "「$1」 会在远程服务器上被永久删除，无法恢复。",
     "confirm.delete_category_title": "删除该分类？",
     "confirm.delete_category_message": "「$1」 下所有会话的归属关系会被解除（会话本身保留）。",
     "confirm.delete": "删除",

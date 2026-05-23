@@ -62,23 +62,39 @@ export async function _renameSessionPrompt(app: any, session: Session) {
 }
 
 export async function _deleteSession(app: any, session: Session, wsPath: string) {
-  const confirmed = await confirmDialog({
-    title: t("confirm.delete_session_title"),
-    description: t("confirm.delete_session_message", session.display_title),
-    confirmLabel: t("confirm.delete"),
-    cancelLabel: t("settings.cancel"),
-    danger: true,
-  });
-  if (!confirmed) return;
+  const ws = (app.ws.workspaces as WorkspaceItem[]).find(
+    (w) => w.path === wsPath && w.provider === session.provider,
+  );
+  const sshTarget = ws?.ssh;
+
+  // SSH sessions are deleted with `rm` on the remote host — there's no
+  // recycle bin to fall back on, so we always confirm. Local sessions go to
+  // the OS trash, which is undoable, so we skip the prompt and rely on the
+  // toast for visibility.
+  if (sshTarget) {
+    const confirmed = await confirmDialog({
+      title: t("confirm.delete_session_title"),
+      description: t("confirm.delete_session_ssh_message", session.display_title),
+      confirmLabel: t("confirm.delete"),
+      cancelLabel: t("settings.cancel"),
+      danger: true,
+    });
+    if (!confirmed) return;
+  }
+
   try {
-    await tauriInvoke("delete_session", { sessionId: session.id, provider: session.provider });
+    await tauriInvoke("delete_session", {
+      sessionId: session.id,
+      provider: session.provider,
+      ssh: sshTarget || null,
+    });
     app.activeSessionIds.delete(session.id);
     if (app.focusedSessionId === session.id) app.focusedSessionId = null;
     for (const [id, tab] of app.tabs.tabsMap) {
       if (tab.sessionId === session.id && tab.sessionProvider === session.provider) app.tabs.closeTab(id);
     }
-    await app._refreshWorkspaceSessions(wsPath, session.provider, "delete");
-    showToast(t("toast.deleted"), { variant: "success" });
+    await app._refreshWorkspaceSessions(wsPath, session.provider, "delete", sshTarget);
+    showToast(sshTarget ? t("toast.deleted_ssh") : t("toast.deleted"), { variant: "success" });
     app._scheduleSaveAppState();
   } catch (e) {
     console.error("Delete failed:", e);

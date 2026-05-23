@@ -469,7 +469,15 @@ pub fn rename_session(
 }
 
 #[tauri::command]
-pub fn delete_session(session_id: String, provider: Option<SessionProvider>) -> Result<(), String> {
+pub fn delete_session(
+    session_id: String,
+    provider: Option<SessionProvider>,
+    ssh: Option<SshTarget>,
+) -> Result<(), String> {
+    if let Some(ssh_target) = ssh {
+        let provider = provider.unwrap_or_default();
+        return delete_remote_session(&session_id, provider, &ssh_target);
+    }
     if matches!(provider, Some(SessionProvider::Codex)) {
         return delete_codex_session(&session_id);
     }
@@ -500,6 +508,47 @@ pub fn delete_session(session_id: String, provider: Option<SessionProvider>) -> 
     } else {
         Err(format!("Session file not found for id: {}", session_id))
     }
+}
+
+/// Session ids are uuids in both Claude and Codex, so this whitelist is enough
+/// to keep them safe to splice into a remote shell command.
+fn is_safe_session_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn delete_remote_session(
+    session_id: &str,
+    provider: SessionProvider,
+    ssh: &SshTarget,
+) -> Result<(), String> {
+    if !is_safe_session_id(session_id) {
+        return Err("Invalid session id".to_string());
+    }
+
+    let (search_root, name_pattern) = match provider {
+        SessionProvider::Claude => ("$HOME/.claude/projects", format!("{}.jsonl", session_id)),
+        SessionProvider::Codex => ("$HOME/.codex/sessions", format!("rollout-*-{}.jsonl", session_id)),
+    };
+
+    // -print so we can detect a "no match" situation (find returns 0 even
+    // when nothing matched). The pattern is built from a uuid we validated
+    // above, so no shell-quoting is required.
+    let cmd = format!(
+        "find {} -type f -name {} -print -delete",
+        search_root, name_pattern
+    );
+    let output = ssh_exec(ssh, &cmd)?;
+    if output.trim().is_empty() {
+        return Err(format!(
+            "Remote session file not found for id: {}",
+            session_id
+        ));
+    }
+    Ok(())
 }
 
 fn rename_codex_session(session_id: &str, new_title: &str) -> Result<(), String> {
