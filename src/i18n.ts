@@ -158,6 +158,7 @@ const dict: Record<string, Record<string, string>> = {
     "ssh.connection_info": "Connection",
     "ssh.workspace_info": "Workspace",
     "ssh.browse_hint": "Click a folder to navigate, then click \"Select this directory\".",
+    "ssh.refresh_dir": "Refresh",
   },
 
   zh: {
@@ -319,6 +320,7 @@ const dict: Record<string, Record<string, string>> = {
     "ssh.connection_info": "连接信息",
     "ssh.workspace_info": "工作区设置",
     "ssh.browse_hint": "点击文件夹进入，再点击「选择此目录」确定路径。",
+    "ssh.refresh_dir": "刷新",
   },
 };
 

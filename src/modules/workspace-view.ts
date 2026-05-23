@@ -571,6 +571,7 @@ export async function _promptAddSshWorkspace(app: any): Promise<void> {
       <div id="ssh-browse" class="ssh-browse">
         <div class="ssh-browse-header">
           <span class="ssh-browse-path" id="ssh-browse-path"></span>
+          <button class="ssh-browse-refresh-btn" id="ssh-browse-refresh" type="button" title="${t("ssh.refresh_dir")}"><span>↻</span></button>
           <button class="ssh-browse-select-btn" id="ssh-browse-select" type="button">${t("ssh.select_dir")}</button>
         </div>
         <div class="ssh-browse-list" id="ssh-browse-list"></div>
@@ -618,6 +619,7 @@ export async function _promptAddSshWorkspace(app: any): Promise<void> {
   const browsePathEl = $<HTMLSpanElement>("#ssh-browse-path");
   const browseListEl = $<HTMLDivElement>("#ssh-browse-list");
   const browseSelectBtn = $<HTMLButtonElement>("#ssh-browse-select");
+  const browseRefreshBtn = $<HTMLButtonElement>("#ssh-browse-refresh");
   const status = $<HTMLDivElement>("#ssh-status");
   const testBtn = $<HTMLButtonElement>("#ssh-test-btn");
   const saveBtn = $<HTMLButtonElement>("#ssh-save-btn");
@@ -691,6 +693,10 @@ export async function _promptAddSshWorkspace(app: any): Promise<void> {
 
   let currentBrowsePath = "";
   let browseSeq = 0;
+  type BrowseEntry = { name: string; is_dir: boolean; path: string };
+  const browseEntryCache = new Map<string, BrowseEntry[]>();
+  const browseResolveCache = new Map<string, string>();
+
   const computeParent = (absPath: string): string | null => {
     if (!absPath.startsWith("/")) return null;
     const trimmed = absPath.replace(/\/+$/, "") || "/";
@@ -699,7 +705,54 @@ export async function _promptAddSshWorkspace(app: any): Promise<void> {
     if (idx <= 0) return "/";
     return trimmed.slice(0, idx);
   };
-  const loadRemoteDir = async (rawPath: string) => {
+
+  const renderBrowseEntries = (canonical: string, entries: BrowseEntry[]) => {
+    currentBrowsePath = canonical;
+    browsePathEl.textContent = canonical;
+    browsePathEl.title = canonical;
+    browseSelectBtn.disabled = false;
+    browseListEl.innerHTML = "";
+
+    const parent = computeParent(canonical);
+    if (parent !== null) {
+      const parentEl = document.createElement("div");
+      parentEl.className = "ssh-browse-item parent";
+      parentEl.innerHTML = `<i data-lucide="corner-up-left" style="width:12px;height:12px;"></i> <span>..</span>`;
+      parentEl.title = parent;
+      parentEl.addEventListener("click", () => loadRemoteDir(parent));
+      browseListEl.appendChild(parentEl);
+    }
+
+    const sorted = entries.slice().sort((a, b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    let hasEntry = false;
+    for (const entry of sorted) {
+      hasEntry = true;
+      const item = document.createElement("div");
+      item.className = `ssh-browse-item ${entry.is_dir ? "dir" : "file"}`;
+      const childPath = entry.path || `${canonical.replace(/\/$/, "")}/${entry.name}`;
+      item.title = childPath;
+      const iconName = entry.is_dir ? "folder" : "file";
+      item.innerHTML = `<i data-lucide="${iconName}" style="width:12px;height:12px;"></i> <span>${escapeHtml(entry.name)}</span>`;
+      if (entry.is_dir) {
+        item.addEventListener("click", () => loadRemoteDir(childPath));
+      }
+      browseListEl.appendChild(item);
+    }
+
+    if (!hasEntry && browseListEl.children.length === (parent !== null ? 1 : 0)) {
+      const emptyEl = document.createElement("div");
+      emptyEl.className = "ssh-browse-state";
+      emptyEl.textContent = t("ssh.empty_dir");
+      browseListEl.appendChild(emptyEl);
+    }
+    refreshIcons();
+  };
+
+  const loadRemoteDir = async (rawPath: string, force = false) => {
     const ssh = requireHost();
     if (!ssh) return;
     const seq = ++browseSeq;
@@ -707,75 +760,67 @@ export async function _promptAddSshWorkspace(app: any): Promise<void> {
     browsePathEl.textContent = rawPath;
     browseSelectBtn.disabled = true;
     browseBtn.disabled = true;
+    browseRefreshBtn.disabled = true;
+
+    // 1. Resolve the path to a canonical absolute path (cached).
+    let canonical: string;
+    try {
+      if (rawPath.startsWith("/")) {
+        canonical = rawPath.replace(/\/+(?!$)/g, "/").replace(/\/+$/, "") || "/";
+      } else if (browseResolveCache.has(rawPath)) {
+        canonical = browseResolveCache.get(rawPath)!;
+      } else {
+        canonical = await tauriInvoke<string>("ssh_resolve_path", { ssh, path: rawPath });
+        browseResolveCache.set(rawPath, canonical);
+      }
+    } catch (e) {
+      if (seq !== browseSeq) return;
+      browseListEl.innerHTML = `<div class="ssh-browse-state error">${escapeHtml(t("ssh.browse_failed"))}: ${escapeHtml(String(e))}</div>`;
+      browseBtn.disabled = false;
+      browseRefreshBtn.disabled = false;
+      return;
+    }
+    if (seq !== browseSeq) return;
+
+    // 2. Try cache first (unless force-refresh).
+    const cached = force ? undefined : browseEntryCache.get(canonical);
+    if (cached) {
+      renderBrowseEntries(canonical, cached);
+      browseBtn.disabled = false;
+      browseRefreshBtn.disabled = false;
+      return;
+    }
+
+    // 3. Fetch from backend.
     browseListEl.innerHTML = `<div class="ssh-browse-state"><i data-lucide="loader" class="spin" style="width:12px;height:12px;"></i> ${escapeHtml(t("ssh.loading_dir"))}</div>`;
     refreshIcons();
+    if (force) browseRefreshBtn.classList.add("spinning");
     try {
-      // Resolve relative / ~ paths to a canonical absolute path so navigation
-      // and parent computation work uniformly.
-      let canonical = rawPath;
-      if (!rawPath.startsWith("/")) {
-        canonical = await tauriInvoke<string>("ssh_resolve_path", { ssh, path: rawPath });
-      }
+      const entries = await tauriInvoke<BrowseEntry[]>("list_files", { path: canonical, ssh });
       if (seq !== browseSeq) return;
-      const entries = await tauriInvoke<Array<{ name: string; is_dir: boolean; path: string }>>(
-        "list_files",
-        { path: canonical, ssh },
-      );
-      if (seq !== browseSeq) return;
-      currentBrowsePath = canonical;
-      browsePathEl.textContent = canonical;
-      browseSelectBtn.disabled = false;
-      browseListEl.innerHTML = "";
-
-      const parent = computeParent(canonical);
-      if (parent !== null) {
-        const parentEl = document.createElement("div");
-        parentEl.className = "ssh-browse-item parent";
-        parentEl.innerHTML = `<i data-lucide="corner-up-left" style="width:12px;height:12px;"></i> <span>..</span>`;
-        parentEl.title = parent;
-        parentEl.addEventListener("click", () => loadRemoteDir(parent));
-        browseListEl.appendChild(parentEl);
-      }
-
-      const sorted = (entries || []).slice().sort((a, b) => {
-        if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-
-      let hasEntry = false;
-      for (const entry of sorted) {
-        hasEntry = true;
-        const item = document.createElement("div");
-        item.className = `ssh-browse-item ${entry.is_dir ? "dir" : "file"}`;
-        const childPath = entry.path || `${canonical.replace(/\/$/, "")}/${entry.name}`;
-        item.title = childPath;
-        const iconName = entry.is_dir ? "folder" : "file";
-        item.innerHTML = `<i data-lucide="${iconName}" style="width:12px;height:12px;"></i> <span>${escapeHtml(entry.name)}</span>`;
-        if (entry.is_dir) {
-          item.addEventListener("click", () => loadRemoteDir(childPath));
-        }
-        browseListEl.appendChild(item);
-      }
-
-      if (!hasEntry && browseListEl.children.length === (parent !== null ? 1 : 0)) {
-        const emptyEl = document.createElement("div");
-        emptyEl.className = "ssh-browse-state";
-        emptyEl.textContent = t("ssh.empty_dir");
-        browseListEl.appendChild(emptyEl);
-      }
-      refreshIcons();
+      browseEntryCache.set(canonical, entries || []);
+      renderBrowseEntries(canonical, entries || []);
     } catch (e) {
       if (seq !== browseSeq) return;
       browseSelectBtn.disabled = true;
       browseListEl.innerHTML = `<div class="ssh-browse-state error">${escapeHtml(t("ssh.browse_failed"))}: ${escapeHtml(String(e))}</div>`;
     } finally {
-      if (seq === browseSeq) browseBtn.disabled = false;
+      if (seq === browseSeq) {
+        browseBtn.disabled = false;
+        browseRefreshBtn.disabled = false;
+        browseRefreshBtn.classList.remove("spinning");
+      }
     }
   };
 
   browseBtn.addEventListener("click", () => {
     const start = pathInput.value.trim() || "~";
     loadRemoteDir(start);
+  });
+
+  browseRefreshBtn.addEventListener("click", () => {
+    const target = currentBrowsePath || pathInput.value.trim() || "~";
+    loadRemoteDir(target, true);
   });
 
   browseSelectBtn.addEventListener("click", () => {
