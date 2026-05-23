@@ -65,6 +65,7 @@ pub fn run() {
             commands::sessions::rename_session,
             commands::sessions::delete_session,
             commands::files::list_files,
+            commands::files::read_text_file,
             commands::files::delete_file,
         ])
         .build(tauri::generate_context!())

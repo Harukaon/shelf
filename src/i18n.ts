@@ -34,6 +34,9 @@ const dict: Record<string, Record<string, string>> = {
 
     "file.empty": "Empty directory",
     "file.failed": "Failed to load files",
+    "file.preview_truncated": "Preview truncated to 2 MB",
+    "file.preview_line_cap": "Showing first $1 of $2 lines",
+    "file.preview_binary": "Binary file — preview not available",
 
     "settings.title": "Settings",
     "settings.general_title": "General",
@@ -198,6 +201,9 @@ const dict: Record<string, Record<string, string>> = {
 
     "file.empty": "空目录",
     "file.failed": "加载文件失败",
+    "file.preview_truncated": "预览已截断到 2 MB",
+    "file.preview_line_cap": "仅显示前 $1 / $2 行",
+    "file.preview_binary": "二进制文件，无法预览",
 
     "settings.title": "设置",
     "settings.general_title": "通用",

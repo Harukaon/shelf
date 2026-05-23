@@ -1,16 +1,10 @@
-import { FileEntry } from "../types";
+import { FileEntry, SshTarget } from "../types";
 import { tauriInvoke, refreshIcons } from "../helpers";
 import { showContextMenu } from "./context-menu";
 import { t, getLang } from "../i18n";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-
-function showToast(msg: string) {
-  const el = document.createElement("div");
-  el.className = "toast";
-  el.textContent = msg;
-  document.body.appendChild(el);
-  setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 300); }, 2500);
-}
+import { showToast } from "./toast";
+import { looksLikeTextFile, openFilePreview } from "./file-preview";
 
 const childCache = new Map<string, FileEntry[]>();
 
@@ -18,10 +12,10 @@ export function clearFileCache() {
   childCache.clear();
 }
 
-async function loadChildren(dirPath: string): Promise<FileEntry[]> {
+async function loadChildren(dirPath: string, ssh?: SshTarget): Promise<FileEntry[]> {
   if (childCache.has(dirPath)) return childCache.get(dirPath)!;
   try {
-    const children = await tauriInvoke<FileEntry[]>("list_files", { path: dirPath });
+    const children = await tauriInvoke<FileEntry[]>("list_files", { path: dirPath, ssh: ssh || null });
     childCache.set(dirPath, children);
     return children;
   } catch (e) {
@@ -33,6 +27,7 @@ async function loadChildren(dirPath: string): Promise<FileEntry[]> {
 let selectedWorkspacePath = "";
 let onRefreshTree: (() => void) | undefined;
 let rootFiles: FileEntry[] = [];
+let currentSsh: SshTarget | undefined;
 
 export async function renderFileTree(
   container: HTMLElement,
@@ -41,12 +36,14 @@ export async function renderFileTree(
   loadedDirs: Set<string>,
   wsPath: string,
   onRefresh?: () => void,
+  ssh?: SshTarget,
   indent = 0,
 ): Promise<void> {
   if (indent === 0) {
     selectedWorkspacePath = wsPath;
     onRefreshTree = onRefresh;
     rootFiles = files;
+    currentSsh = ssh;
     container.innerHTML = "";
   }
   if (files.length === 0 && indent === 0) {
@@ -106,7 +103,7 @@ export async function renderFileTree(
           try {
             await tauriInvoke("delete_file", { path: absPath });
             if (onRefreshTree) onRefreshTree();
-            showToast(t("toast.deleted"));
+            showToast(t("toast.deleted"), { variant: "success" });
           } catch (_) {}
         }},
       ], e.clientX, e.clientY);
@@ -118,20 +115,28 @@ export async function renderFileTree(
           expandedDirs.delete(file.path);
         } else {
           if (!loadedDirs.has(file.path)) {
-            file.children = await loadChildren(file.path);
+            file.children = await loadChildren(file.path, currentSsh);
             loadedDirs.add(file.path);
           }
           expandedDirs.add(file.path);
         }
         // Always re-render from root
-        await renderFileTree(container, rootFiles, expandedDirs, loadedDirs, wsPath, onRefresh, 0);
+        await renderFileTree(container, rootFiles, expandedDirs, loadedDirs, wsPath, onRefresh, currentSsh, 0);
+      });
+    } else {
+      item.addEventListener("click", () => {
+        if (!looksLikeTextFile(file.name)) {
+          showToast(t("file.preview_binary"), { variant: "info" });
+          return;
+        }
+        openFilePreview(file.path, currentSsh).catch((err) => console.error("Preview failed:", err));
       });
     }
 
     container.appendChild(item);
 
     if (file.is_dir && isExpanded && file.children.length > 0) {
-      await renderFileTree(container, file.children, expandedDirs, loadedDirs, wsPath, onRefresh, indent + 1);
+      await renderFileTree(container, file.children, expandedDirs, loadedDirs, wsPath, onRefresh, currentSsh, indent + 1);
     }
   }
 

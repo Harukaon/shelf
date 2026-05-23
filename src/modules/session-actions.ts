@@ -422,7 +422,15 @@ export async function _loadFileTree(app: any, path: string) {
     app.expandedDirs.clear();
     app.loadedDirs.clear();
     clearFileCache();
-    await renderFileTree(app.fileTreeEl, files, app.expandedDirs, app.loadedDirs, app.selectedWorkspace || "", () => app._loadFileTree(app.selectedWorkspace!));
+    await renderFileTree(
+      app.fileTreeEl,
+      files,
+      app.expandedDirs,
+      app.loadedDirs,
+      app.selectedWorkspace || "",
+      () => app._loadFileTree(app.selectedWorkspace!),
+      ssh || undefined,
+    );
   } catch (e) {
     console.error("List files:", e);
     if (app.selectedWorkspace === requestPath) {
