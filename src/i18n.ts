@@ -116,6 +116,13 @@ const dict: Record<string, Record<string, string>> = {
     "toast.scan_failed": "Session scan failed",
     "toast.rename_failed": "Rename failed: $1",
 
+    "confirm.delete_session_title": "Delete this session?",
+    "confirm.delete_session_message": "\"$1\" will be moved to trash. Active tabs for this session will close.",
+    "confirm.delete_category_title": "Delete this category?",
+    "confirm.delete_category_message": "All session mappings in \"$1\" will be removed. The underlying sessions are kept.",
+    "confirm.delete": "Delete",
+    "confirm.workspace_countdown": "Click again within $1s to remove",
+
     "ssh.section": "SSH",
     "ssh.add": "+ Add SSH Host",
     "ssh.add_title": "Add SSH Workspace",
@@ -267,6 +274,13 @@ const dict: Record<string, Record<string, string>> = {
     "toast.workspace_remove_failed": "移除工作区失败：$1",
     "toast.scan_failed": "扫描会话失败",
     "toast.rename_failed": "重命名失败：$1",
+
+    "confirm.delete_session_title": "删除该会话？",
+    "confirm.delete_session_message": "「$1」 会被移到回收站，相关的标签页会关闭。",
+    "confirm.delete_category_title": "删除该分类？",
+    "confirm.delete_category_message": "「$1」 下所有会话的归属关系会被解除（会话本身保留）。",
+    "confirm.delete": "删除",
+    "confirm.workspace_countdown": "$1 秒内再次点击以移除",
 
     "ssh.section": "SSH",
     "ssh.add": "+ 添加 SSH 主机",

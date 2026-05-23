@@ -4,7 +4,7 @@ import { t } from "../i18n";
 import { clearFileCache, renderFileTree } from "./files";
 import { createTerminalTab, writeToPty } from "./terminal";
 import { showTerminalMenu } from "./pickers";
-import { openDialog } from "./dialog";
+import { openDialog, confirmDialog } from "./dialog";
 import { showToast } from "./toast";
 import {
   PENDING_SESSION_DISCOVERY_TIMEOUT_MS,
@@ -61,6 +61,14 @@ export async function _renameSessionPrompt(app: any, session: Session) {
 }
 
 export async function _deleteSession(app: any, session: Session, wsPath: string) {
+  const confirmed = await confirmDialog({
+    title: t("confirm.delete_session_title"),
+    description: t("confirm.delete_session_message", session.display_title),
+    confirmLabel: t("confirm.delete"),
+    cancelLabel: t("settings.cancel"),
+    danger: true,
+  });
+  if (!confirmed) return;
   try {
     await tauriInvoke("delete_session", { sessionId: session.id, provider: session.provider });
     app.activeSessionIds.delete(session.id);

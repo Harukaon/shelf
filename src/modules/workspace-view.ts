@@ -2,7 +2,7 @@ import Sortable from "sortablejs";
 import { escapeHtml, formatDate, refreshIcons, tauriInvoke } from "../helpers";
 import { t } from "../i18n";
 import { showContextMenu } from "./context-menu";
-import { openDialog } from "./dialog";
+import { openDialog, confirmDialog } from "./dialog";
 import { SESSION_PAGE_SIZE } from "./app-constants";
 import type { AiGroup, AiSessionMeta, Session, SessionProvider, SshTarget, WorkspaceItem } from "../types";
 
@@ -171,6 +171,16 @@ export function _renameAiCategoryPrompt(app: any, category: AiGroup) {
 }
 
 export async function _deleteAiCategory(app: any, categoryId: string) {
+  const category = app.aiSessionMap.groups[categoryId];
+  const name = category?.name || categoryId;
+  const confirmed = await confirmDialog({
+    title: t("confirm.delete_category_title"),
+    description: t("confirm.delete_category_message", name),
+    confirmLabel: t("confirm.delete"),
+    cancelLabel: t("settings.cancel"),
+    danger: true,
+  });
+  if (!confirmed) return;
   delete app.aiSessionMap.groups[categoryId];
   app.collapsedAiCategories.delete(categoryId);
   for (const [sessionKey, meta] of Object.entries(app.aiSessionMap.sessions as Record<string, AiSessionMeta>)) {
@@ -258,6 +268,16 @@ export function _renderWorkspaceItem(app: any, ws: WorkspaceItem): HTMLElement {
   });
   const removeBtn = header.querySelector(".ws-remove-btn") as HTMLButtonElement;
   let deletePending = false;
+  let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+  const resetRemoveBtn = () => {
+    deletePending = false;
+    if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
+    removeBtn.classList.remove("pending");
+    removeBtn.innerHTML = '<i data-lucide="trash-2"></i>';
+    removeBtn.removeAttribute("title");
+    removeBtn.setAttribute("title", t("workspace.remove"));
+    refreshIcons();
+  };
   removeBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (deletePending) {
@@ -273,21 +293,22 @@ export function _renderWorkspaceItem(app: any, ws: WorkspaceItem): HTMLElement {
         app._clearPendingSessionTab(id);
         app.tabs.closeTab(id);
       }
+      resetRemoveBtn();
       app.ws.remove(ws.path, ws.provider, ws.ssh);
       app._showStartPage();
     } else {
       deletePending = true;
-      removeBtn.style.color = "var(--red)";
-      removeBtn.style.opacity = "1";
-      removeBtn.innerHTML = '<i data-lucide="x"></i>';
-      refreshIcons();
-      setTimeout(() => {
-        deletePending = false;
-        removeBtn.style.opacity = "0.5";
-        removeBtn.innerHTML = '<i data-lucide="trash-2"></i>';
-        refreshIcons();
-      }, 3000);
+      removeBtn.classList.add("pending");
+      removeBtn.textContent = t("confirm.delete");
+      removeBtn.setAttribute("title", t("confirm.workspace_countdown", "3"));
+      pendingTimer = setTimeout(resetRemoveBtn, 3000);
     }
+  });
+  removeBtn.addEventListener("mouseleave", () => {
+    if (!deletePending) return;
+    // give a small grace period; reset after 1.2s on mouse leave
+    if (pendingTimer) clearTimeout(pendingTimer);
+    pendingTimer = setTimeout(resetRemoveBtn, 1200);
   });
   header.addEventListener("click", () => {
     app._toggleWorkspaceExpansion(ws.path, ws.provider, ws.ssh);
