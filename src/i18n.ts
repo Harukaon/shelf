@@ -29,6 +29,7 @@ const dict: Record<string, Record<string, string>> = {
     "session.remaining": "remaining",
     "session.load": "Load",
     "session.refresh": "↻ Refresh Sessions",
+    "session.workspace_empty": "No sessions in this workspace yet.",
 
     "file.empty": "Empty directory",
     "file.failed": "Failed to load files",
@@ -188,6 +189,7 @@ const dict: Record<string, Record<string, string>> = {
     "session.remaining": "剩余",
     "session.load": "加载",
     "session.refresh": "↻ 刷新会话",
+    "session.workspace_empty": "这个工作区暂无会话。",
 
     "file.empty": "空目录",
     "file.failed": "加载文件失败",

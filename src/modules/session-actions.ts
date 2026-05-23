@@ -1,5 +1,5 @@
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
-import { tauriInvoke } from "../helpers";
+import { refreshIcons, tauriInvoke } from "../helpers";
 import { t } from "../i18n";
 import { clearFileCache, renderFileTree } from "./files";
 import { createTerminalTab, writeToPty } from "./terminal";
@@ -266,10 +266,11 @@ export function _clearPendingSessionTab(app: any, tabId: string) {
 }
 
 export async function _refreshAllSessions(app: any) {
+  if (app.refreshBtn.classList.contains("spinning")) return;
   app.refreshBtn.classList.add("spinning");
   try {
     for (const ws of app.ws.workspaces as WorkspaceItem[]) {
-      await app._refreshWorkspaceSessions(ws.path, ws.provider, "manual");
+      await app._refreshWorkspaceSessions(ws.path, ws.provider, "manual", ws.ssh);
     }
   } finally {
     app.refreshBtn.classList.remove("spinning");
@@ -391,18 +392,25 @@ export function _onWorkspaceSelected(app: any, newPath: string) {
 }
 
 export async function _loadFileTree(app: any, path: string) {
+  const requestPath = path;
+  app.fileTreeEl.innerHTML = `<div class="tree-empty"><i data-lucide="loader" class="spin" style="width:12px;height:12px;vertical-align:middle;margin-right:4px;"></i> ${t("session.loading")}</div>`;
+  refreshIcons();
   try {
     // Check if the selected workspace is SSH
     const ws = app.ws.workspaces.find((w: any) => w.path === path && w.ssh);
     const ssh = ws?.ssh || null;
     const files = await tauriInvoke<FileEntry[]>("list_files", { path, ssh });
+    // Bail if user switched workspaces while we were loading.
+    if (app.selectedWorkspace !== requestPath) return;
     app.expandedDirs.clear();
     app.loadedDirs.clear();
     clearFileCache();
     await renderFileTree(app.fileTreeEl, files, app.expandedDirs, app.loadedDirs, app.selectedWorkspace || "", () => app._loadFileTree(app.selectedWorkspace!));
   } catch (e) {
     console.error("List files:", e);
-    app.fileTreeEl.innerHTML = `<div class="tree-empty">${t("file.failed")}</div>`;
+    if (app.selectedWorkspace === requestPath) {
+      app.fileTreeEl.innerHTML = `<div class="tree-empty">${t("file.failed")}</div>`;
+    }
   }
 }
 

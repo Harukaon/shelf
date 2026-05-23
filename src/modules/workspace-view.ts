@@ -318,11 +318,16 @@ export function _renderWorkspaceItem(app: any, ws: WorkspaceItem): HTMLElement {
   if (isExpanded) {
     const sessionList = document.createElement("div");
     sessionList.className = "workspace-sessions show";
-    if (sessions.length === 0 && !app.ws.sessions.has(key)) {
+    if (!app.ws.sessions.has(key)) {
       const loading = document.createElement("div");
       loading.className = "workspace-loading";
       loading.innerHTML = `<i data-lucide="loader" class="spin"></i> ${t("session.loading")}`;
       sessionList.appendChild(loading);
+    } else if (sessions.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "workspace-empty";
+      empty.textContent = t("session.workspace_empty");
+      sessionList.appendChild(empty);
     } else {
       for (const session of sessions.slice(0, pageEnd)) {
         sessionList.appendChild(app._renderSessionItem(session, ws.path));
