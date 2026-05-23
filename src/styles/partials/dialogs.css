@@ -247,6 +247,7 @@
   color: var(--text-secondary);
   margin-bottom: 8px;
 }
+.dialog-status:empty { margin-bottom: 0; }
 .dialog-status.success { color: var(--green); }
 .dialog-status.error { color: var(--red); }
 .dialog-status .spin {
@@ -255,4 +256,7 @@
   vertical-align: middle;
   margin-right: 4px;
 }
+
+/* Generic dialog body wrapper */
+.dialog-body { display: contents; }
 

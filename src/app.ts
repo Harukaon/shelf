@@ -11,6 +11,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import Sortable from "sortablejs";
 import { showContextMenu } from "./modules/context-menu";
+import { openDialog } from "./modules/dialog";
 import { APP_THEMES, SESSION_POLL_INTERVAL_MS, START_TAB_ID, THEME_STORAGE_KEY, type AppTheme } from "./modules/app-constants";
 import * as settingsPanel from "./modules/settings-panel";
 import * as aiWindow from "./modules/ai-window";
@@ -348,35 +349,32 @@ class App {
   }
 
   private _showQuitDialog() {
-    // Prevent stacking dialogs
-    if (document.querySelector("#confirm-close")) return;
+    if (document.querySelector(".dialog-quit")) return;
 
-    const appWindow = getCurrentWebviewWindow();
-    const panel = document.createElement("div");
-    panel.className = "settings-panel";
-    panel.innerHTML = `
-      <div class="settings-title">${t("settings.quit_title")}</div>
-      <p class="settings-note">${t("settings.quit_note")}</p>
-      <div class="settings-actions">
-        <button id="confirm-close" class="danger">${t("settings.quit")}</button>
-        <button id="cancel-close">${t("settings.cancel")}</button>
-      </div>`;
-    const backdrop = document.createElement("div");
-    backdrop.className = "picker-backdrop";
-    const close = () => { panel.remove(); backdrop.remove(); };
-    document.body.appendChild(backdrop);
-    document.body.appendChild(panel);
-    panel.querySelector("#cancel-close")!.addEventListener("click", close);
-    panel.querySelector("#confirm-close")!.addEventListener("click", async () => {
-      close();
-      if (this.saveStateTimer) {
-        clearTimeout(this.saveStateTimer);
-        this.saveStateTimer = null;
-      }
-      await this._saveAppStateNow();
-      await this.tabs.closeAllPtys();
-      await tauriInvoke("exit_app");
+    const handle = openDialog({
+      title: t("settings.quit_title"),
+      description: t("settings.quit_note"),
+      actions: [
+        {
+          label: t("settings.quit"),
+          variant: "danger",
+          isDefault: true,
+          onClick: () => {
+            if (this.saveStateTimer) {
+              clearTimeout(this.saveStateTimer);
+              this.saveStateTimer = null;
+            }
+            (async () => {
+              await this._saveAppStateNow();
+              await this.tabs.closeAllPtys();
+              await tauriInvoke("exit_app");
+            })().catch((e) => console.error("Quit failed:", e));
+          },
+        },
+        { label: t("settings.cancel") },
+      ],
     });
+    handle.panel.classList.add("dialog-quit");
   }
 
   private _passiveTimer: ReturnType<typeof setInterval> | null = null;

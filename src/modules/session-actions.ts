@@ -1,9 +1,10 @@
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
-import { escapeHtml, tauriInvoke } from "../helpers";
+import { tauriInvoke } from "../helpers";
 import { t } from "../i18n";
 import { clearFileCache, renderFileTree } from "./files";
 import { createTerminalTab, writeToPty } from "./terminal";
 import { showTerminalMenu } from "./pickers";
+import { openDialog } from "./dialog";
 import {
   PENDING_SESSION_DISCOVERY_TIMEOUT_MS,
   PENDING_SESSION_POLL_INTERVAL_MS,
@@ -29,42 +30,33 @@ export function _onTabAdd(app: any) {
 }
 
 export async function _renameSessionPrompt(app: any, session: Session) {
-  console.log("[Shelf] rename prompt for:", session.display_title, session.id);
-  const panel = document.createElement("div");
-  panel.className = "settings-panel";
-  panel.innerHTML = `
-    <div class="settings-title">${t("context.rename")}</div>
-    <div class="settings-row">
-      <input id="rename-input" value="${escapeHtml(session.display_title)}" style="flex:1;padding:6px 10px;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;font-family:inherit;font-size:13px;outline:none;" autofocus>
-    </div>
-    <div class="settings-actions">
-      <button id="rename-save">${t("settings.save")}</button>
-      <button id="rename-cancel">${t("settings.cancel")}</button>
-    </div>`;
-  const backdrop = document.createElement("div");
-  backdrop.className = "picker-backdrop";
-  const close = () => { panel.remove(); backdrop.remove(); };
-  backdrop.addEventListener("click", close);
-  document.body.appendChild(backdrop);
-  document.body.appendChild(panel);
-  const input = panel.querySelector("#rename-input") as HTMLInputElement;
+  const input = document.createElement("input");
+  input.value = session.display_title;
+
+  const row = document.createElement("div");
+  row.className = "settings-row";
+  row.appendChild(input);
+
+  openDialog({
+    title: t("context.rename"),
+    body: row,
+    actions: [
+      {
+        label: t("settings.save"),
+        variant: "primary",
+        isDefault: true,
+        onClick: async () => {
+          const newName = input.value.trim();
+          if (!newName) return false;
+          await tauriInvoke("rename_session", { sessionId: session.id, newTitle: newName, provider: session.provider });
+          for (const ws of app.ws.workspaces) await app._refreshWorkspaceSessions(ws.path, ws.provider, "rename");
+        },
+      },
+      { label: t("settings.cancel") },
+    ],
+  });
   input.focus();
   input.select();
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") doSave(); });
-  const doSave = async () => {
-    const newName = input.value.trim();
-    console.log("[Shelf] rename new name:", newName);
-    if (!newName) return;
-    try {
-      console.log("[Shelf] calling rename_session command...");
-      await tauriInvoke("rename_session", { sessionId: session.id, newTitle: newName, provider: session.provider });
-      console.log("[Shelf] rename_session OK, refreshing...");
-      for (const ws of app.ws.workspaces) await app._refreshWorkspaceSessions(ws.path, ws.provider, "rename");
-    } catch (e) { console.error("Rename failed:", e); }
-    close();
-  };
-  panel.querySelector("#rename-save")!.addEventListener("click", doSave);
-  panel.querySelector("#rename-cancel")!.addEventListener("click", close);
 }
 
 export async function _deleteSession(app: any, session: Session, wsPath: string) {

@@ -59,7 +59,21 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
     </div>`;
   const backdrop = document.createElement("div");
   backdrop.className = "picker-backdrop";
-  const close = () => { panel.remove(); backdrop.remove(); };
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener("keydown", onKeydown);
+    panel.remove();
+    backdrop.remove();
+  };
+  const onKeydown = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close();
+    }
+  };
+  document.addEventListener("keydown", onKeydown);
   backdrop.addEventListener("click", close);
   document.body.appendChild(backdrop);
   document.body.appendChild(panel);

@@ -2,6 +2,7 @@ import Sortable from "sortablejs";
 import { escapeHtml, formatDate, refreshIcons, tauriInvoke } from "../helpers";
 import { t } from "../i18n";
 import { showContextMenu } from "./context-menu";
+import { openDialog } from "./dialog";
 import { SESSION_PAGE_SIZE } from "./app-constants";
 import type { AiGroup, AiSessionMeta, Session, SessionProvider, SshTarget, WorkspaceItem } from "../types";
 
@@ -137,39 +138,36 @@ export function _renderAiMappedSessionItem(app: any, sessionKey: string, session
 }
 
 export function _renameAiCategoryPrompt(app: any, category: AiGroup) {
-  const panel = document.createElement("div");
-  panel.className = "settings-panel";
-  panel.innerHTML = `
-    <div class="settings-title">${t("ai.rename_category")}</div>
-    <div class="settings-row">
-      <input id="rename-input" value="${escapeHtml(category.name)}" style="flex:1;padding:6px 10px;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;font-family:inherit;font-size:13px;outline:none;" autofocus>
-    </div>
-    <div class="settings-actions">
-      <button id="rename-save">${t("settings.save")}</button>
-      <button id="rename-cancel">${t("settings.cancel")}</button>
-    </div>`;
-  const backdrop = document.createElement("div");
-  backdrop.className = "picker-backdrop";
-  const close = () => { panel.remove(); backdrop.remove(); };
-  backdrop.addEventListener("click", close);
-  document.body.appendChild(backdrop);
-  document.body.appendChild(panel);
-  const input = panel.querySelector("#rename-input") as HTMLInputElement;
+  const input = document.createElement("input");
+  input.value = category.name;
+
+  const row = document.createElement("div");
+  row.className = "settings-row";
+  row.appendChild(input);
+
+  openDialog({
+    title: t("ai.rename_category"),
+    body: row,
+    actions: [
+      {
+        label: t("settings.save"),
+        variant: "primary",
+        isDefault: true,
+        onClick: async () => {
+          const nextName = input.value.trim();
+          if (!nextName) return false;
+          const current = app.aiSessionMap.groups[category.id];
+          if (!current) return;
+          app.aiSessionMap.groups[category.id] = { ...current, name: nextName };
+          await app._saveAiSessionMap();
+          app._renderWorkspaces();
+        },
+      },
+      { label: t("settings.cancel") },
+    ],
+  });
   input.focus();
   input.select();
-  const doSave = async () => {
-    const nextName = input.value.trim();
-    if (!nextName) return;
-    const current = app.aiSessionMap.groups[category.id];
-    if (!current) return close();
-    app.aiSessionMap.groups[category.id] = { ...current, name: nextName };
-    await app._saveAiSessionMap();
-    close();
-    app._renderWorkspaces();
-  };
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") doSave(); });
-  panel.querySelector("#rename-save")!.addEventListener("click", doSave);
-  panel.querySelector("#rename-cancel")!.addEventListener("click", close);
 }
 
 export async function _deleteAiCategory(app: any, categoryId: string) {
