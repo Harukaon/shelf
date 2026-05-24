@@ -246,7 +246,12 @@ pub async fn pty_spawn<R: Runtime>(
         .unwrap_or_else(|| "xterm-256color".to_string());
 
     let env_remove = env_remove.unwrap_or_default();
-    let remove_path = env_remove.iter().any(|key| is_path_env_key(key));
+    let env_remove_keys: Vec<String> = env_remove
+        .iter()
+        .map(|key| key.trim().to_string())
+        .filter(|key| !key.is_empty())
+        .collect();
+    let remove_path = env_remove_keys.iter().any(|key| is_path_env_key(key));
     let path_env = if remove_path {
         None
     } else {
@@ -258,12 +263,8 @@ pub async fn pty_spawn<R: Runtime>(
     if let Some(cwd) = cwd {
         cmd.cwd(OsString::from(cwd));
     }
-    if !env_remove.is_empty() {
-        for key in env_remove {
-            if !key.trim().is_empty() {
-                cmd.env_remove(OsString::from(key));
-            }
-        }
+    for key in &env_remove_keys {
+        cmd.env_remove(OsString::from(key));
     }
     cmd.env(OsString::from("TERM"), OsString::from(term_name));
     cmd.env(OsString::from("COLORTERM"), OsString::from("truecolor"));
@@ -274,6 +275,9 @@ pub async fn pty_spawn<R: Runtime>(
     // those always win, and before the frontend env overrides below.
     let login_env = login_shell_env();
     for (k, v) in login_env.iter() {
+        if env_remove_keys.iter().any(|key| key == k) {
+            continue;
+        }
         cmd.env(OsString::from(k), OsString::from(v));
     }
     for (k, v) in env.iter() {

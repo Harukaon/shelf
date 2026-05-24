@@ -409,7 +409,7 @@ export function _renderTabs(app: any) {
     const closeHtml = tab.closable ? `<span class="tab-close" title="${t("tab.close")}"><i data-lucide="x"></i></span>` : "";
     tabEl.innerHTML = `
       <span class="tab-drag-handle">
-        <span class="dot-icon${isTabActive ? " active" : ""}"></span>
+        <span class="dot-icon${isTabActive ? " active" : ""}${tab.hasUnreadOutput ? " unread" : ""}"></span>
         <span class="tab-title">${escapeHtml(tab.title)}</span>
       </span>
       ${closeHtml}`;
@@ -422,6 +422,7 @@ export function _renderTabs(app: any) {
         }
         app._clearPendingSessionTab(tab.id);
         app.tabs.closeTab(tab.id, () => app._showStartPage());
+        app._updateBadge();
         app._scheduleSaveAppState();
       });
     }

@@ -98,6 +98,7 @@ class App {
       this.tabList, this.terminalContainer,
       () => this._renderTabs(), () => this._renderWorkspaces(),
       (tab) => this._onActivateTab(tab),
+      (tabId, hasUnread) => this._onUnreadChange(tabId, hasUnread),
     );
 
     this.ws = new WorkspaceManager(
@@ -641,6 +642,23 @@ class App {
 
   private _writePty(tabId: string, data: string) { return sessionActions._writePty(this, tabId, data); }
 
+  private _onUnreadChange(_tabId: string, _hasUnread: boolean) {
+    this._updateBadge();
+    this._renderTabs();
+  }
+
+  private async _updateBadge() {
+    let count = 0;
+    this.tabs.tabsMap.forEach((tab) => {
+      if (tab.hasUnreadOutput && tab.id !== START_TAB_ID) count++;
+    });
+    try {
+      await getCurrentWebviewWindow().setBadgeCount(count);
+    } catch {
+      /* unsupported on some platforms */
+    }
+  }
+
   private _onActivateTab(tab: TabInfo) { return sessionActions._onActivateTab(this, tab); }
 
   private _onTerminalDrop(path: string) { return sessionActions._onTerminalDrop(this, path); }
@@ -678,7 +696,7 @@ class App {
     const sshArgs = buildSshArgs(ssh, "claude");
     const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { cwd: ws.path, workspacePath: ws.path, sessionProvider: "claude", command: { bin: "ssh", args: sshArgs }, ssh },
+      { cwd: ws.path, workspacePath: ws.path, sessionProvider: "claude", command: { bin: "ssh", args: sshArgs }, ssh, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },
     );
     tab.sessionProvider = "claude";
     this.tabs.addTab(tab);
@@ -691,7 +709,7 @@ class App {
     const sshArgs = buildSshArgs(ssh, `codex -C ${shQuote(ws.path)}`);
     const tab = createTerminalTab(tabId, t("tab.codex_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { cwd: ws.path, workspacePath: ws.path, sessionProvider: "codex", command: { bin: "ssh", args: sshArgs }, ssh },
+      { cwd: ws.path, workspacePath: ws.path, sessionProvider: "codex", command: { bin: "ssh", args: sshArgs }, ssh, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },
     );
     tab.sessionProvider = "codex";
     this.tabs.addTab(tab);

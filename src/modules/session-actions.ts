@@ -127,7 +127,7 @@ export async function _newClaudeSession(app: any, wsPath: string) {
   const baselineIds = await app._sessionBaselineIds(wsPath, "claude");
   const tab = createTerminalTab(tabId, t("tab.claude_new"), app.terminalContainer,
     (id, data) => app._writePty(id, data),
-    { cwd: wsPath, workspacePath: wsPath, sessionProvider: "claude", command: { bin: app.claudePath, args: [] } },
+    { cwd: wsPath, workspacePath: wsPath, sessionProvider: "claude", command: { bin: app.claudePath, args: [] }, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
   );
   app.tabs.addTab(tab);
   app.pendingSessionTabs.set(tabId, {
@@ -145,7 +145,7 @@ export async function _newCodexSession(app: any, wsPath: string) {
   const baselineIds = await app._sessionBaselineIds(wsPath, "codex");
   const tab = createTerminalTab(tabId, t("tab.codex_new"), app.terminalContainer,
     (id, data) => app._writePty(id, data),
-    { cwd: wsPath, workspacePath: wsPath, sessionProvider: "codex", command: { bin: app.codexPath, args: ["-C", wsPath] } },
+    { cwd: wsPath, workspacePath: wsPath, sessionProvider: "codex", command: { bin: app.codexPath, args: ["-C", wsPath] }, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
   );
   app.tabs.addTab(tab);
   app.pendingSessionTabs.set(tabId, {
@@ -312,7 +312,7 @@ export function _createBlankTab(app: any, cwd?: string) {
   }
   const tab = createTerminalTab(tabId, t("tab.terminal"), app.terminalContainer,
     (id, data) => app._writePty(id, data),
-    { cwd, workspacePath: wsPath, sessionProvider: provider, shell: app.shellSetting },
+    { cwd, workspacePath: wsPath, sessionProvider: provider, shell: app.shellSetting, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
   );
   app.tabs.addTab(tab);
   app._scheduleSaveAppState();
@@ -343,7 +343,7 @@ export function _openSessionTab(app: any, session: Session, wsPath: string) {
     const sshArgs = buildSshArgs(ws.ssh, remoteCmd);
     const tab = createTerminalTab(tabId, app._displayTitleForSession(session), app.terminalContainer,
       (id, data) => app._writePty(id, data),
-      { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: wsPath, command: { bin: "ssh", args: sshArgs }, ssh: ws.ssh },
+      { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: wsPath, command: { bin: "ssh", args: sshArgs }, ssh: ws.ssh, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
     );
     (tab as any).ssh = ws.ssh;
     app.tabs.addTab(tab);
@@ -355,7 +355,7 @@ export function _openSessionTab(app: any, session: Session, wsPath: string) {
 
   const tab = createTerminalTab(tabId, app._displayTitleForSession(session), app.terminalContainer,
     (id, data) => app._writePty(id, data),
-    { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: wsPath, command },
+    { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: wsPath, command, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
   );
   app.tabs.addTab(tab);
   app.activeSessionIds.add(session.id);
