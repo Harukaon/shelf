@@ -268,7 +268,14 @@ pub async fn pty_spawn<R: Runtime>(
     }
     cmd.env(OsString::from("TERM"), OsString::from(term_name));
     cmd.env(OsString::from("COLORTERM"), OsString::from("truecolor"));
-    cmd.env(OsString::from("TERM_PROGRAM"), OsString::from("Shelf"));
+    // EXPERIMENTAL (v0.2.11): masquerade as VS Code. Hypothesis: Claude Code's
+    // TUI inspects TERM_PROGRAM to decide cursor-management strategy. With
+    // TERM_PROGRAM=Shelf (unknown to it) it parks the real cursor at the
+    // bottom bar after each redraw, so xterm renders the IME composition view
+    // there instead of at the visible input box. If "vscode" makes Claude
+    // Code keep the cursor in the input box, the IME placement bug goes away.
+    // Revisit (or properly inherit a real terminal identifier) in v0.2.12.
+    cmd.env(OsString::from("TERM_PROGRAM"), OsString::from("vscode"));
     // Inject login-shell environment (e.g. API keys from .zshrc/.zprofile)
     // so that GUI-launched Shelf can still access user-defined variables.
     // This is applied after Shelf's own TERM/COLORTERM/TERM_PROGRAM so
