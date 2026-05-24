@@ -36,7 +36,6 @@ type PendingSessionTab = {
 
 type ResizeDirection = "East" | "North" | "NorthEast" | "NorthWest" | "South" | "SouthEast" | "SouthWest" | "West";
 
-
 class App {
   tabs!: TabManager;
   ws!: WorkspaceManager;
@@ -51,6 +50,7 @@ class App {
   sessionScanSeq = new Map<string, number>();
   restoredState: SavedAppState | null = null;
   restoreInProgress = false;
+  restoredUnreadMutedTabs = new Set<string>();
   appStateReady = false;
   saveStateTimer: ReturnType<typeof setTimeout> | null = null;
   expandedDirs = new Set<string>();
@@ -100,6 +100,7 @@ class App {
       (tab) => this._onActivateTab(tab),
       (tabId, hasUnread) => this._onUnreadChange(tabId, hasUnread),
     );
+    this._clearUnreadState();
 
     this.ws = new WorkspaceManager(
       () => this._renderWorkspaces(),
@@ -647,6 +648,35 @@ class App {
     this._renderTabs();
   }
 
+  private _clearUnreadState() {
+    this.tabs?.tabsMap.forEach((tab) => {
+      tab.hasUnreadOutput = false;
+    });
+    this._updateBadge();
+    this._renderTabs();
+  }
+
+  private _beginRestoredTabUnreadSuppression(tabId: string) {
+    this.restoredUnreadMutedTabs.add(tabId);
+    const tab = this.tabs?.tabsMap.get(tabId);
+    if (tab) tab.hasUnreadOutput = false;
+  }
+
+  private _shouldSuppressRestoredTabUnread(tabId: string): boolean {
+    return this.restoredUnreadMutedTabs.has(tabId);
+  }
+
+  private _endRestoredTabUnreadSuppression(tabId: string, refresh = true) {
+    if (!this.restoredUnreadMutedTabs.delete(tabId)) return;
+
+    const tab = this.tabs?.tabsMap.get(tabId);
+    if (tab?.hasUnreadOutput) tab.hasUnreadOutput = false;
+    if (refresh) {
+      this._updateBadge();
+      this._renderTabs();
+    }
+  }
+
   private async _updateBadge() {
     let count = 0;
     this.tabs.tabsMap.forEach((tab) => {
@@ -659,7 +689,10 @@ class App {
     }
   }
 
-  private _onActivateTab(tab: TabInfo) { return sessionActions._onActivateTab(this, tab); }
+  private _onActivateTab(tab: TabInfo) {
+    this._endRestoredTabUnreadSuppression(tab.id);
+    return sessionActions._onActivateTab(this, tab);
+  }
 
   private _onTerminalDrop(path: string) { return sessionActions._onTerminalDrop(this, path); }
 

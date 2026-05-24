@@ -15,6 +15,8 @@ jobs:
         include:
           - platform: macos-latest
             target: aarch64-apple-darwin
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
 
     runs-on: ${{ matrix.platform }}
 
@@ -56,4 +58,6 @@ jobs:
           name: shelf-${{ matrix.target }}
           path: |
             src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe
           retention-days: 30

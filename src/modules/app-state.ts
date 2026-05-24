@@ -15,8 +15,6 @@ export type SavedWindowState = {
   maximized?: boolean;
 };
 
-const RESTORED_TAB_UNREAD_SUPPRESS_MS = 4_000;
-
 export type SavedTabState = {
   id: string;
   kind: "terminal" | "session" | "new-session";
@@ -191,6 +189,7 @@ export async function _restoreSavedTabs(app: any) {
     app.restoreInProgress = false;
     app._syncActiveSessionIds();
     app._syncFocusedSessionId();
+    app._clearUnreadState();
     app._renderTabs();
     app._renderWorkspaces();
     app._scheduleSaveAppState();
@@ -200,8 +199,7 @@ export async function _restoreSavedTabs(app: any) {
 export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | null {
   const unreadOptions = {
     onUnreadChange: (id: string, v: boolean) => app._onUnreadChange(id, v),
-    suppressUnreadUntil: Date.now() + RESTORED_TAB_UNREAD_SUPPRESS_MS,
-    suppressUnreadWhile: () => app.restoreInProgress === true,
+    suppressUnreadWhile: (id: string) => app.restoreInProgress === true || app._shouldSuppressRestoredTabUnread(id),
   };
 
   if (saved.kind === "session") {
@@ -219,15 +217,19 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
         ? `codex resume ${shQuote(session.id)} -C ${shQuote(cwd)}`
         : `claude --resume ${shQuote(session.id)}`;
       const sshArgs = buildSshArgs(saved.ssh, remoteCmd);
-      return createTerminalTab(saved.id, app._displayTitleForSession(session) || saved.title, app.terminalContainer,
+      const tab = createTerminalTab(saved.id, app._displayTitleForSession(session) || saved.title, app.terminalContainer,
         (id, data) => app._writePty(id, data),
         { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh, ...unreadOptions },
       );
+      app._beginRestoredTabUnreadSuppression(tab.id);
+      return tab;
     }
-    return createTerminalTab(saved.id, app._displayTitleForSession(session) || saved.title, app.terminalContainer,
+    const tab = createTerminalTab(saved.id, app._displayTitleForSession(session) || saved.title, app.terminalContainer,
       (id, data) => app._writePty(id, data),
       { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command, ...unreadOptions },
     );
+    app._beginRestoredTabUnreadSuppression(tab.id);
+    return tab;
   }
 
   if (saved.kind === "new-session") {
@@ -243,6 +245,7 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
         (id, data) => app._writePty(id, data),
         { cwd: saved.workspacePath, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh, ...unreadOptions },
       );
+      app._beginRestoredTabUnreadSuppression(tab.id);
       return tab;
     }
     const command = saved.sessionProvider === "codex"
@@ -253,6 +256,7 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       (id, data) => app._writePty(id, data),
       { cwd: saved.workspacePath, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, command, ...unreadOptions },
     );
+    app._beginRestoredTabUnreadSuppression(tab.id);
     app.pendingSessionTabs.set(saved.id, {
       workspacePath: saved.workspacePath,
       provider: saved.sessionProvider,
@@ -266,13 +270,15 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
   // SSH plain shell tab
   if (saved.ssh) {
     const sshArgs = buildSshArgs(saved.ssh);
-    return createTerminalTab(saved.id, saved.title || t("ssh.new_shell"), app.terminalContainer,
+    const tab = createTerminalTab(saved.id, saved.title || t("ssh.new_shell"), app.terminalContainer,
       (id, data) => app._writePty(id, data),
       { cwd: saved.cwd, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, shell: "ssh", command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh, ...unreadOptions },
     );
+    app._beginRestoredTabUnreadSuppression(tab.id);
+    return tab;
   }
 
-  return createTerminalTab(saved.id, saved.title || t("tab.terminal"), app.terminalContainer,
+  const tab = createTerminalTab(saved.id, saved.title || t("tab.terminal"), app.terminalContainer,
     (id, data) => app._writePty(id, data),
     {
       cwd: saved.cwd,
@@ -282,4 +288,6 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       ...unreadOptions,
     },
   );
+  app._beginRestoredTabUnreadSuppression(tab.id);
+  return tab;
 }

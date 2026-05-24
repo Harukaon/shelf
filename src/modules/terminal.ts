@@ -12,8 +12,7 @@ type TerminalTabOptions = {
   shell?: string;
   command?: { bin: string; args: string[] };
   onUnreadChange?: (tabId: string, hasUnread: boolean) => void;
-  suppressUnreadUntil?: number;
-  suppressUnreadWhile?: () => boolean;
+  suppressUnreadWhile?: (tabId: string) => boolean;
   ssh?: SshTarget;
 };
 
@@ -435,9 +434,7 @@ export function createTerminalTab(
     const bindPty = (boundPty: IPty, fallback: boolean) => {
       boundPty.onData((data: Uint8Array) => {
         terminal.write(data);
-        const suppressUnread =
-          (options?.suppressUnreadUntil !== undefined && Date.now() < options.suppressUnreadUntil) ||
-          options?.suppressUnreadWhile?.() === true;
+        const suppressUnread = options?.suppressUnreadWhile?.(tabId) === true;
         if (!suppressUnread && !tabInfo.active && !tabInfo.hasUnreadOutput) {
           tabInfo.hasUnreadOutput = true;
           options?.onUnreadChange?.(tabId, true);
