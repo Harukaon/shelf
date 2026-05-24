@@ -138,6 +138,86 @@ function loginShellArgs(shell: string): string[] {
   return [];
 }
 
+function applyWindowsPtyOptions(
+  terminal: Terminal,
+  tabId: string,
+  onPtyWrite: (tabId: string, data: string) => void,
+) {
+  if (!navigator.platform.toLowerCase().includes("win")) return;
+  // Enables xterm's WindowsPtyHeuristics — fixes TUI cursor jumping under ConPTY
+  // (e.g. Claude Code's TUI input box).
+  terminal.options.windowsPty = { backend: "conpty" };
+  terminal.options.reflowCursorLine = true;
+  // Reply to ConPTY 1.22+'s DA1 query so it doesn't stall waiting for a response.
+  // Mirrors microsoft/vscode terminalInstance.ts and xterm.js own DA1 reply.
+  terminal.parser.registerCsiHandler({ final: "c" }, (params) => {
+    if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
+      onPtyWrite(tabId, "\x1b[?61;4c");
+      return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * Recover input events that xterm.js 6.1.0-beta.220's `_inputEvent` drops on
+ * WebKit/WKWebView (Tauri on macOS, Safari). xterm guards with
+ * `(!ev.composed || !this._keyDownSeen)` and discards anything else, expecting
+ * a compositionend/keypress fallback. WKWebView violates that expectation in
+ * two known cases:
+ *   - Chinese punctuation via IME (xtermjs/xterm.js#3070): no compositionstart
+ *     / compositionend fires, so the setTimeout-based fallback never runs.
+ *   - Rapid Shifted ASCII like "ASD" (xtermjs/xterm.js#5374): keypress doesn't
+ *     fire for overlapping shifted keys, so `_keyPressHandled` stays false,
+ *     yet the input is still dropped by the same guard.
+ * VS Code doesn't hit either because Electron uses Chromium, not WKWebView.
+ * Mirrors the intent of the (unmerged) PR #5614 fix.
+ */
+function attachWebKitInputPatch(
+  wrapper: HTMLElement,
+  terminal: Terminal,
+  tabId: string,
+  onPtyWrite: (tabId: string, data: string) => void,
+) {
+  // xterm 6.x public Terminal wraps internals behind `_core`. textarea has a
+  // public getter, but _compositionHelper / _keyPressHandled / _keyDownSeen
+  // live on the core.
+  const pub = terminal as unknown as { textarea?: HTMLTextAreaElement; _core?: any };
+  const core = pub._core as
+    | {
+        _compositionHelper?: { isComposing: boolean; _isSendingComposition?: boolean };
+        _keyPressHandled?: boolean;
+      }
+    | undefined;
+  const ta = pub.textarea;
+  const comp = core?._compositionHelper;
+  if (!ta || !comp || !core) return;
+
+  let keyDownSeen = false;
+  ta.addEventListener("keydown", () => { keyDownSeen = true; }, true);
+  ta.addEventListener("keyup", () => { keyDownSeen = false; }, true);
+
+  // Capture on the wrapper so we observe `input` before xterm's textarea-level
+  // listener (capture phase fires parent → child).
+  wrapper.addEventListener("input", (ev) => {
+    if (ev.target !== ta) return;
+    const ie = ev as InputEvent;
+    if (ie.inputType !== "insertText" || !ie.data) return;
+    if (!ie.composed || !keyDownSeen) return;     // xterm._inputEvent will fire
+    if (comp.isComposing) return;                  // active IME composition
+    if (comp._isSendingComposition) return;        // pending compositionend setTimeout
+    if (core._keyPressHandled) return;             // xterm._keyPress already fired
+
+    onPtyWrite(tabId, ie.data);
+    ta.value = ""; // clear so xterm's _handleAnyTextareaChanges doesn't double-fire later
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+  }, true);
+}
+
+
+
+
 function shouldRemoveInheritedNoColor(options?: TerminalTabOptions): boolean {
   if (!options?.command || !options.sessionProvider) return false;
   const env = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env;
@@ -369,6 +449,8 @@ export function createTerminalTab(
   } catch (_) {
     /* keep xterm's default 80x24 */
   }
+  applyWindowsPtyOptions(terminal, tabId, onPtyWrite);
+  attachWebKitInputPatch(wrapper, terminal, tabId, onPtyWrite);
 
   const tabInfo: TabInfo = {
     id: tabId,
