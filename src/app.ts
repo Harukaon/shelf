@@ -147,6 +147,7 @@ class App {
       this.tabList, this.terminalContainer,
       () => this._renderTabs(), () => this._renderWorkspaces(),
       (tab) => this._onActivateTab(tab),
+      (tabId, hasUnread) => this._onUnreadChange(tabId, hasUnread),
     );
 
     this.ws = new WorkspaceManager(
@@ -738,7 +739,7 @@ class App {
         : { bin: this.claudePath, args: ["--resume", session.id] };
       return createTerminalTab(saved.id, this._displayTitleForSession(session) || saved.title, this.terminalContainer,
         (id, data) => this._writePty(id, data),
-        { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command },
+        { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },
       );
     }
 
@@ -750,7 +751,7 @@ class App {
       const title = saved.title || (saved.sessionProvider === "codex" ? t("tab.codex_new") : t("tab.claude_new"));
       const tab = createTerminalTab(saved.id, title, this.terminalContainer,
         (id, data) => this._writePty(id, data),
-        { cwd: saved.workspacePath, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, command },
+        { cwd: saved.workspacePath, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, command, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },
       );
       this.pendingSessionTabs.set(saved.id, {
         workspacePath: saved.workspacePath,
@@ -769,6 +770,7 @@ class App {
         workspacePath: saved.workspacePath,
         sessionProvider: saved.sessionProvider,
         shell: saved.shell || this.shellSetting,
+        onUnreadChange: (id, v) => this._onUnreadChange(id, v),
       },
     );
   }
@@ -1433,7 +1435,7 @@ class App {
     const baselineIds = await this._sessionBaselineIds(wsPath, "claude");
     const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { cwd: wsPath, workspacePath: wsPath, sessionProvider: "claude", command: { bin: this.claudePath, args: [] } },
+      { cwd: wsPath, workspacePath: wsPath, sessionProvider: "claude", command: { bin: this.claudePath, args: [] }, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },
     );
     this.tabs.addTab(tab);
     this.pendingSessionTabs.set(tabId, {
@@ -1451,7 +1453,7 @@ class App {
     const baselineIds = await this._sessionBaselineIds(wsPath, "codex");
     const tab = createTerminalTab(tabId, t("tab.codex_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { cwd: wsPath, workspacePath: wsPath, sessionProvider: "codex", command: { bin: this.codexPath, args: ["-C", wsPath] } },
+      { cwd: wsPath, workspacePath: wsPath, sessionProvider: "codex", command: { bin: this.codexPath, args: ["-C", wsPath] }, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },
     );
     this.tabs.addTab(tab);
     this.pendingSessionTabs.set(tabId, {
@@ -1617,7 +1619,7 @@ class App {
     }
     const tab = createTerminalTab(tabId, t("tab.terminal"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { cwd, workspacePath: wsPath, sessionProvider: provider, shell: this.shellSetting },
+      { cwd, workspacePath: wsPath, sessionProvider: provider, shell: this.shellSetting, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },
     );
     this.tabs.addTab(tab);
     this._scheduleSaveAppState();
@@ -1639,7 +1641,7 @@ class App {
       : { bin: this.claudePath, args: ["--resume", session.id] };
     const tab = createTerminalTab(tabId, this._displayTitleForSession(session), this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: wsPath, command },
+      { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: wsPath, command, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },
     );
     this.tabs.addTab(tab);
     this.activeSessionIds.add(session.id);
@@ -1670,6 +1672,25 @@ class App {
       this._loadFileTree(tab.workspacePath);
     }
     this._scheduleSaveAppState();
+  }
+
+  /** Called when a tab's unread state changes (background tab receives output). */
+  private _onUnreadChange(_tabId: string, _hasUnread: boolean) {
+    this._updateBadge();
+    this._renderTabs();
+  }
+
+  /** Update the macOS Dock badge with the count of tabs with unread output. */
+  private async _updateBadge() {
+    let count = 0;
+    this.tabs.tabsMap.forEach((tab) => {
+      if (tab.hasUnreadOutput && tab.id !== "__start__") count++;
+    });
+    try {
+      await getCurrentWebviewWindow().setBadgeCount(count);
+    } catch {
+      // Silently ignore if the platform doesn't support badge (e.g. Linux)
+    }
   }
 
   private _onTerminalDrop(path: string) {
@@ -2082,7 +2103,7 @@ class App {
       const closeHtml = tab.closable ? `<span class="tab-close" title="${t("tab.close")}"><i data-lucide="x"></i></span>` : "";
       tabEl.innerHTML = `
         <span class="tab-drag-handle">
-          <span class="dot-icon${isTabActive ? " active" : ""}"></span>
+          <span class="dot-icon${isTabActive ? " active" : ""}${tab.hasUnreadOutput ? " unread" : ""}"></span>
           <span class="tab-title">${escapeHtml(tab.title)}</span>
         </span>
         ${closeHtml}`;

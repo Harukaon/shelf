@@ -300,6 +300,9 @@ body[data-platform="windows"] #tab-bar {
 .tab-item .dot-icon.active {
   background: var(--accent); border-color: var(--accent);
 }
+.tab-item .dot-icon.unread {
+  background: var(--red); border-color: var(--red);
+}
 
 .tab-drag-handle {
   display: flex;
