@@ -43,6 +43,7 @@ export interface TabInfo {
   fitAddon: import("@xterm/addon-fit").FitAddon;
   pty?: import("./modules/pty").IPty;
   ptyExited?: boolean;
+  hasUnreadOutput?: boolean;
   containerEl: HTMLDivElement;
   active: boolean;
   resizeTimer?: ReturnType<typeof setTimeout>;

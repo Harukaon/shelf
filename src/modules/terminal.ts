@@ -11,6 +11,7 @@ type TerminalTabOptions = {
   workspacePath?: string;
   shell?: string;
   command?: { bin: string; args: string[] };
+  onUnreadChange?: (tabId: string, hasUnread: boolean) => void;
 };
 
 const COMMAND_FALLBACK_WINDOW_MS = 4_000;
@@ -424,6 +425,11 @@ export function createTerminalTab(
     const bindPty = (boundPty: IPty, fallback: boolean) => {
       boundPty.onData((data: Uint8Array) => {
         terminal.write(data);
+        // Mark background tabs as having unread output (like macOS Terminal)
+        if (!tabInfo.active && !tabInfo.hasUnreadOutput) {
+          tabInfo.hasUnreadOutput = true;
+          options?.onUnreadChange?.(tabId, true);
+        }
         if (!fallback && commandFallback && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS) {
           earlyOutput += decoder.decode(data, { stream: true });
           if (earlyOutput.length > COMMAND_FALLBACK_MAX_OUTPUT) {

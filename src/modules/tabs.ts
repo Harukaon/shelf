@@ -11,6 +11,7 @@ export class TabManager {
     private renderTabs: () => void,
     private renderWorkspaces: () => void,
     private onActivateTab?: (tab: TabInfo) => void,
+    private onUnreadChange?: (tabId: string, hasUnread: boolean) => void,
   ) {}
 
   get tabsMap() {
@@ -42,6 +43,11 @@ export class TabManager {
       tab.containerEl.style.pointerEvents = "auto";
       tab.active = true;
       repaintTerminal(tab);
+      // Clear unread indicator when user switches to this tab
+      if (tab.hasUnreadOutput) {
+        tab.hasUnreadOutput = false;
+        this.onUnreadChange?.(tabId, false);
+      }
       if (this.onActivateTab) this.onActivateTab(tab);
     }
     this.activeTabId = tabId;
