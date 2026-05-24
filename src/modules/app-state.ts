@@ -15,6 +15,8 @@ export type SavedWindowState = {
   maximized?: boolean;
 };
 
+const RESTORED_TAB_UNREAD_SUPPRESS_MS = 4_000;
+
 export type SavedTabState = {
   id: string;
   kind: "terminal" | "session" | "new-session";
@@ -196,6 +198,12 @@ export async function _restoreSavedTabs(app: any) {
 }
 
 export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | null {
+  const unreadOptions = {
+    onUnreadChange: (id: string, v: boolean) => app._onUnreadChange(id, v),
+    suppressUnreadUntil: Date.now() + RESTORED_TAB_UNREAD_SUPPRESS_MS,
+    suppressUnreadWhile: () => app.restoreInProgress === true,
+  };
+
   if (saved.kind === "session") {
     if (!saved.sessionId || !saved.sessionProvider || !saved.workspacePath) return null;
     const session = app.ws.getSessions(saved.workspacePath, saved.sessionProvider)
@@ -213,12 +221,12 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       const sshArgs = buildSshArgs(saved.ssh, remoteCmd);
       return createTerminalTab(saved.id, app._displayTitleForSession(session) || saved.title, app.terminalContainer,
         (id, data) => app._writePty(id, data),
-        { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
+        { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh, ...unreadOptions },
       );
     }
     return createTerminalTab(saved.id, app._displayTitleForSession(session) || saved.title, app.terminalContainer,
       (id, data) => app._writePty(id, data),
-      { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
+      { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command, ...unreadOptions },
     );
   }
 
@@ -233,7 +241,7 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       const title = saved.title || t("ssh.new_shell");
       const tab = createTerminalTab(saved.id, title, app.terminalContainer,
         (id, data) => app._writePty(id, data),
-        { cwd: saved.workspacePath, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
+        { cwd: saved.workspacePath, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh, ...unreadOptions },
       );
       return tab;
     }
@@ -243,7 +251,7 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
     const title = saved.title || (saved.sessionProvider === "codex" ? t("tab.codex_new") : t("tab.claude_new"));
     const tab = createTerminalTab(saved.id, title, app.terminalContainer,
       (id, data) => app._writePty(id, data),
-      { cwd: saved.workspacePath, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, command, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
+      { cwd: saved.workspacePath, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, command, ...unreadOptions },
     );
     app.pendingSessionTabs.set(saved.id, {
       workspacePath: saved.workspacePath,
@@ -260,7 +268,7 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
     const sshArgs = buildSshArgs(saved.ssh);
     return createTerminalTab(saved.id, saved.title || t("ssh.new_shell"), app.terminalContainer,
       (id, data) => app._writePty(id, data),
-      { cwd: saved.cwd, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, shell: "ssh", command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
+      { cwd: saved.cwd, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, shell: "ssh", command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh, ...unreadOptions },
     );
   }
 
@@ -271,7 +279,7 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       workspacePath: saved.workspacePath,
       sessionProvider: saved.sessionProvider,
       shell: saved.shell || app.shellSetting,
-      onUnreadChange: (id, v) => app._onUnreadChange(id, v),
+      ...unreadOptions,
     },
   );
 }

@@ -653,7 +653,7 @@ class App {
       if (tab.hasUnreadOutput && tab.id !== START_TAB_ID) count++;
     });
     try {
-      await getCurrentWebviewWindow().setBadgeCount(count);
+      await getCurrentWebviewWindow().setBadgeCount(count > 0 ? count : undefined);
     } catch {
       /* unsupported on some platforms */
     }
