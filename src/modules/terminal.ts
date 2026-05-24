@@ -1,5 +1,6 @@
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { spawn, IPty, IPtyForkOptions } from "./pty";
 import { TabInfo, SshTarget } from "../types";
 import { t } from "../i18n";
@@ -136,6 +137,24 @@ function loginShellArgs(shell: string): string[] {
   const platform = navigator.platform.toLowerCase();
   if (platform.includes("mac") && ["zsh", "bash"].includes(shellName)) return ["-l"];
   return [];
+}
+
+function loadWebglRenderer(terminal: Terminal): void {
+  // Align with VS Code's default renderer. WebGL renders text on a GPU canvas
+  // instead of the per-glyph DOM tree, which is both faster and changes the
+  // stacking context for the hidden textarea — relevant for IME anchoring
+  // under WebView2 (Tauri's Windows webview).
+  try {
+    const webgl = new WebglAddon();
+    // GPU context can be lost (driver crash, headless env, tab backgrounded).
+    // Dispose so xterm falls back to the DOM renderer instead of getting stuck.
+    webgl.onContextLoss(() => webgl.dispose());
+    terminal.loadAddon(webgl);
+  } catch (e) {
+    // WebGL not available (no GPU, software rendering disabled, etc.) — xterm
+    // keeps its default DOM renderer, which still works.
+    console.warn("[Terminal] WebGL renderer unavailable, falling back to DOM:", e);
+  }
 }
 
 function applyWindowsPtyOptions(
@@ -434,6 +453,22 @@ export function createTerminalTab(
     ...fontOptions,
     drawBoldTextInBrightColors: false,
     theme: TERMINAL_THEMES[terminalThemeMode],
+    // Align with microsoft/vscode terminal configuration to behave the same
+    // way TUIs (Claude Code, vim, etc.) expect a "smart" terminal to behave.
+    allowProposedApi: true,
+    rescaleOverlappingGlyphs: true,
+    scrollOnEraseInDisplay: true,
+    // TUIs query window/cell pixel size to do precise layout (e.g. images,
+    // sixel, status-bar placement). Default xterm answers "no" and apps fall
+    // back to assumptions.
+    windowOptions: {
+      getWinSizePixels: true,
+      getCellSizePixels: true,
+      getWinSizeChars: true,
+    },
+    // ConPTY raw input encoding — gives Windows TUIs more precise keystroke
+    // info than legacy VT100 mode.
+    vtExtensions: { win32InputMode: true },
   });
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
@@ -449,6 +484,7 @@ export function createTerminalTab(
   } catch (_) {
     /* keep xterm's default 80x24 */
   }
+  loadWebglRenderer(terminal);
   applyWindowsPtyOptions(terminal, tabId, onPtyWrite);
   attachWebKitInputPatch(wrapper, terminal, tabId, onPtyWrite);
 
