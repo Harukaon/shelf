@@ -64,6 +64,11 @@
   scrollbar-width: thin;
   scrollbar-color: var(--bg-active) transparent;
   overflow-y: auto !important;
+  /* xterm 6.x hard-sets `.xterm-viewport { background-color: #000 }` in its own
+     css; selector specificity (0,3,0) beats `.terminal-wrapper .xterm-viewport`
+     (0,2,0). Pin the background here (ID adds specificity 1,1,1) so it inherits
+     the terminal theme instead of leaking a black strip behind the scrollbar. */
+  background-color: transparent;
 }
 #terminal-container .xterm-viewport::-webkit-scrollbar {
   width: 8px;
