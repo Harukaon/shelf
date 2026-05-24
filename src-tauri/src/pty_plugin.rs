@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU32, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
 };
 
@@ -27,6 +27,71 @@ struct PtySession {
     reader: Mutex<Box<dyn std::io::Read + Send>>,
     reader_closed: AtomicBool,
     child_exited: AtomicBool,
+}
+
+/// Keys that should not be inherited from the login shell environment,
+/// either because Shelf sets them explicitly or because they are
+/// session-specific / display-specific.
+const ENV_SKIP_KEYS: &[&str] = &[
+    "PATH",
+    "TERM",
+    "COLORTERM",
+    "TERM_PROGRAM",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "SHLVL",
+    "_",
+    "PWD",
+    "OLDPWD",
+    "HOME",
+    "LOGNAME",
+    "USER",
+    "SHELL",
+];
+
+/// Capture the full environment from a login shell so that variables
+/// defined in `.zshrc` / `.zprofile` / `.bash_profile` (such as API keys
+/// or custom tool configuration) are available to PTY child processes.
+///
+/// On macOS, GUI apps launched from Dock/Launchpad do **not** inherit
+/// shell environment variables — only launchd's minimal environment is
+/// available. This function bridges that gap.
+///
+/// The result is computed once and cached for the lifetime of the process.
+fn login_shell_env() -> &'static BTreeMap<String, String> {
+    static CACHE: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+        let shell_name = Path::new(&shell)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Use `-l` for login shell (loads .zprofile/.bash_profile),
+        // `-c "env"` to dump the resulting environment.
+        let args: Vec<&str> = if ["zsh", "bash"].contains(&shell_name.as_str()) {
+            vec!["-l", "-c", "env"]
+        } else {
+            vec!["-c", "env"]
+        };
+
+        let output = match std::process::Command::new(&shell).args(&args).output() {
+            Ok(o) if o.status.success() => o,
+            _ => return BTreeMap::new(),
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut env_map = BTreeMap::new();
+        for line in stdout.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                if ENV_SKIP_KEYS.contains(&key) {
+                    continue;
+                }
+                env_map.insert(key.to_string(), value.to_string());
+            }
+        }
+        env_map
+    })
 }
 
 fn is_path_env_key(key: &str) -> bool {
@@ -203,6 +268,14 @@ pub async fn pty_spawn<R: Runtime>(
     cmd.env(OsString::from("TERM"), OsString::from(term_name));
     cmd.env(OsString::from("COLORTERM"), OsString::from("truecolor"));
     cmd.env(OsString::from("TERM_PROGRAM"), OsString::from("Shelf"));
+    // Inject login-shell environment (e.g. API keys from .zshrc/.zprofile)
+    // so that GUI-launched Shelf can still access user-defined variables.
+    // This is applied after Shelf's own TERM/COLORTERM/TERM_PROGRAM so
+    // those always win, and before the frontend env overrides below.
+    let login_env = login_shell_env();
+    for (k, v) in login_env.iter() {
+        cmd.env(OsString::from(k), OsString::from(v));
+    }
     for (k, v) in env.iter() {
         if is_path_env_key(k) {
             continue;
