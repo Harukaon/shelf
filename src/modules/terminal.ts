@@ -23,7 +23,29 @@ function quoteShellArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function shellCommandLine(bin: string, args: string[]): string {
+function quotePowerShellArg(value: string): string {
+  // PowerShell single-quoted strings: escape embedded ' by doubling it.
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function quoteCmdArg(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function shellNameOf(shell: string): string {
+  return (shell.split(/[\\/]/).pop() || "").toLowerCase().replace(/\.exe$/, "");
+}
+
+function shellCommandLine(bin: string, args: string[], shell: string): string {
+  const name = shellNameOf(shell);
+  if (name === "powershell" || name === "pwsh") {
+    // PowerShell needs the call operator `&` to invoke a quoted command path;
+    // a bare quoted path is parsed as a string-literal expression.
+    return ["&", quotePowerShellArg(bin), ...args.map(quotePowerShellArg)].join(" ");
+  }
+  if (name === "cmd") {
+    return [quoteCmdArg(bin), ...args.map(quoteCmdArg)].join(" ");
+  }
   return [bin, ...args].map(quoteShellArg).join(" ");
 }
 
@@ -67,10 +89,11 @@ function spawnCommandPty(
   if (options?.ssh) {
     return { pty };
   }
+  const fallbackShell = fallbackShellForCommand(options);
   return {
     pty,
-    fallbackShell: fallbackShellForCommand(options),
-    fallbackLine: shellCommandLine(command.bin, command.args),
+    fallbackShell,
+    fallbackLine: shellCommandLine(command.bin, command.args, fallbackShell),
   };
 }
 

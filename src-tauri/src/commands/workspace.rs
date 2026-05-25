@@ -328,6 +328,18 @@ pub fn find_codex() -> Result<String, String> {
 fn codex_candidates() -> Vec<PathBuf> {
     let mut candidates = vec![];
 
+    #[cfg(target_os = "windows")]
+    {
+        candidates.push(PathBuf::from("C:/Program Files/nodejs/codex.cmd"));
+        if let Some(home) = dirs::home_dir() {
+            candidates.extend([
+                home.join("AppData/Roaming/npm/codex.cmd"),
+                home.join(".local/bin/codex.exe"),
+                home.join("scoop/shims/codex.cmd"),
+            ]);
+        }
+    }
+
     #[cfg(not(target_os = "windows"))]
     {
         candidates.extend([
@@ -354,6 +366,15 @@ fn codex_candidates() -> Vec<PathBuf> {
             &home.join(".fnm/node-versions"),
             "codex",
         ));
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(local) = dirs::data_local_dir() {
+                candidates.extend(find_versioned_bin_named(
+                    &local.join("fnm/node-versions"),
+                    "codex",
+                ));
+            }
+        }
     }
 
     candidates
@@ -455,6 +476,11 @@ fn find_versioned_bin_named(root: &Path, bin_name: &str) -> Vec<PathBuf> {
     for entry in entries.flatten() {
         let path = entry.path();
         candidates.push(path.join("bin").join(bin_name));
+        #[cfg(target_os = "windows")]
+        {
+            candidates.push(path.join("bin").join(format!("{}.cmd", bin_name)));
+            candidates.push(path.join("Scripts").join(format!("{}.exe", bin_name)));
+        }
         candidates.extend(find_versioned_bin_named(&path, bin_name));
     }
 
