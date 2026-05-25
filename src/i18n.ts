@@ -67,6 +67,10 @@ const dict: Record<string, Record<string, string>> = {
     "settings.ai_models_loaded": "Loaded $1 models from $2.",
     "settings.ai_models_failed": "Failed to load models. You can still enter a model manually. $1",
     "settings.ai_help": "OpenAI-compatible and Claude endpoints are supported. OpenAI-compatible model loading uses GET /models on the configured Base URL; Claude uses Anthropic's /v1/models endpoint.",
+    "settings.logs_title": "Logs",
+    "settings.log_path": "Log file location",
+    "settings.log_path_open": "Reveal",
+    "settings.log_path_unavailable": "(log directory not yet created)",
     "settings.language_en": "English",
     "settings.language_zh": "Chinese",
 
@@ -243,6 +247,10 @@ const dict: Record<string, Record<string, string>> = {
     "settings.ai_models_loaded": "已从 $2 加载 $1 个模型。",
     "settings.ai_models_failed": "模型加载失败。仍然可以手动输入模型。$1",
     "settings.ai_help": "支持 OpenAI 兼容服务和 Claude 端点。OpenAI 兼容模型加载会请求配置 Base URL 的 GET /models；Claude 使用 Anthropic 的 /v1/models 端点。",
+    "settings.logs_title": "日志",
+    "settings.log_path": "日志文件位置",
+    "settings.log_path_open": "打开所在位置",
+    "settings.log_path_unavailable": "（日志目录尚未创建）",
     "settings.language_en": "英语",
     "settings.language_zh": "中文",
 

@@ -1,4 +1,5 @@
 use tauri::Manager;
+use tauri_plugin_log::{Target, TargetKind};
 
 mod commands;
 mod pty_plugin;
@@ -7,6 +8,22 @@ mod session;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    // Persistent rolling log under the OS standard app log dir:
+                    //   macOS:   ~/Library/Logs/com.shelf.app/Shelf.log
+                    //   Windows: %LOCALAPPDATA%\com.shelf.app\logs\Shelf.log
+                    //   Linux:   ~/.local/share/com.shelf.app/logs/Shelf.log
+                    Target::new(TargetKind::LogDir { file_name: Some("Shelf".into()) }),
+                    // Also keep stderr/console output for `target/debug/shelf` debugging.
+                    Target::new(TargetKind::Stdout),
+                ])
+                .max_file_size(5 * 1024 * 1024) // 5 MB before rotation
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -68,6 +85,7 @@ pub fn run() {
             commands::files::read_text_file,
             commands::files::delete_file,
             commands::update::check_for_update,
+            commands::logs::get_log_dir,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

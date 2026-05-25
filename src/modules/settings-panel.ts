@@ -1,3 +1,4 @@
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { tauriInvoke } from "../helpers";
 import { t, setLang, getLang } from "../i18n";
 import type { AiSettings, AiModelListResponse } from "../types";
@@ -54,6 +55,14 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
         <div class="settings-model-list hidden" id="settings-ai-model-list"></div>
         <div class="settings-status" id="settings-ai-model-status"></div>
       </div>
+      <div class="settings-section-title">${t("settings.logs_title")}</div>
+      <div class="settings-row stacked">
+        <label for="settings-log-path">${t("settings.log_path")}</label>
+        <div class="settings-inline-actions">
+          <input id="settings-log-path" readonly value="${t("settings.log_path_unavailable")}">
+          <button id="settings-log-open" type="button" disabled>${t("settings.log_path_open")}</button>
+        </div>
+      </div>
     </div>
     <div class="settings-actions">
       <button id="settings-save">${t("settings.save")}</button>
@@ -106,6 +115,21 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
   }
 
   panel.querySelector("#settings-ai-load-models")!.addEventListener("click", () => app._loadAiModelsForSettings(panel));
+
+  // Logs section — populate the path async; safe if the dir hasn't been
+  // created yet (first launch races plugin initialization).
+  const logPathInput = panel.querySelector("#settings-log-path") as HTMLInputElement;
+  const logOpenBtn = panel.querySelector("#settings-log-open") as HTMLButtonElement;
+  tauriInvoke<string>("get_log_dir")
+    .then((dir) => {
+      if (!dir) return;
+      logPathInput.value = dir;
+      logOpenBtn.disabled = false;
+      logOpenBtn.addEventListener("click", () => {
+        revealItemInDir(dir).catch((e) => console.error("reveal log dir failed:", e));
+      });
+    })
+    .catch((e) => console.warn("get_log_dir failed:", e));
 
   panel.querySelector("#settings-save")!.addEventListener("click", async () => {
     app.shellSetting = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;

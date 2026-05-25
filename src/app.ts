@@ -1,4 +1,6 @@
 import "@xterm/xterm/css/xterm.css";
+import { installFileLoggerBridge } from "./modules/logger";
+installFileLoggerBridge();
 import { tauriInvoke, refreshIcons } from "./helpers";
 import { Session, TabInfo, SessionProvider, SshTarget, AiSessionMap, AiHistoryMessage, AiGroup, ShellCommandApproval } from "./types";
 import { TabManager } from "./modules/tabs";
