@@ -281,7 +281,7 @@ pub fn find_claude() -> Result<String, String> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Some(path) = find_claude_with_shell("powershell") {
+        if let Some(path) = find_command_on_windows("claude") {
             return Ok(path);
         }
     }
@@ -308,7 +308,7 @@ pub fn find_codex() -> Result<String, String> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Some(path) = find_command_with_shell("powershell", "codex") {
+        if let Some(path) = find_command_on_windows("codex") {
             return Ok(path);
         }
     }
@@ -326,16 +326,33 @@ pub fn find_codex() -> Result<String, String> {
 }
 
 fn codex_candidates() -> Vec<PathBuf> {
+    cli_candidates("codex")
+}
+fn claude_candidates() -> Vec<PathBuf> {
+    cli_candidates("claude")
+}
+
+/// Build the list of common install locations to probe for a Node-based CLI
+/// (`claude`, `codex`). The list mirrors how popular package managers / Node
+/// version managers lay out global binaries on each platform; missing entries
+/// fall through to `find_command_on_windows` (Windows) or
+/// `find_command_with_shell` (Unix) which walks the live PATH.
+fn cli_candidates(bin: &str) -> Vec<PathBuf> {
     let mut candidates = vec![];
 
     #[cfg(target_os = "windows")]
     {
-        candidates.push(PathBuf::from("C:/Program Files/nodejs/codex.cmd"));
+        candidates.push(PathBuf::from(format!(
+            "C:/Program Files/nodejs/{bin}.cmd"
+        )));
         if let Some(home) = dirs::home_dir() {
             candidates.extend([
-                home.join("AppData/Roaming/npm/codex.cmd"),
-                home.join(".local/bin/codex.exe"),
-                home.join("scoop/shims/codex.cmd"),
+                home.join(format!("AppData/Roaming/npm/{bin}.cmd")),
+                home.join(format!(".local/bin/{bin}.exe")),
+                home.join(format!("scoop/shims/{bin}.cmd")),
+                home.join(format!("AppData/Local/pnpm/{bin}.cmd")),
+                home.join(format!("AppData/Local/Volta/bin/{bin}.exe")),
+                home.join(format!("AppData/Local/Volta/bin/{bin}.cmd")),
             ]);
         }
     }
@@ -343,125 +360,57 @@ fn codex_candidates() -> Vec<PathBuf> {
     #[cfg(not(target_os = "windows"))]
     {
         candidates.extend([
-            PathBuf::from("/opt/homebrew/bin/codex"),
-            PathBuf::from("/usr/local/bin/codex"),
-            PathBuf::from("/usr/bin/codex"),
+            PathBuf::from(format!("/opt/homebrew/bin/{bin}")),
+            PathBuf::from(format!("/usr/local/bin/{bin}")),
+            PathBuf::from(format!("/usr/bin/{bin}")),
+            PathBuf::from(format!("/home/linuxbrew/.linuxbrew/bin/{bin}")),
         ]);
     }
 
     if let Some(home) = dirs::home_dir() {
         candidates.extend([
-            home.join(".local/bin/codex"),
-            home.join("bin/codex"),
-            home.join(".volta/bin/codex"),
-            home.join(".asdf/shims/codex"),
-            home.join(".bun/bin/codex"),
-            home.join(".npm-global/bin/codex"),
+            home.join(format!(".local/bin/{bin}")),
+            home.join(format!("bin/{bin}")),
+            home.join(format!(".volta/bin/{bin}")),
+            home.join(format!(".asdf/shims/{bin}")),
+            home.join(format!(".bun/bin/{bin}")),
+            home.join(format!(".npm-global/bin/{bin}")),
+            home.join(format!(".local/share/pnpm/{bin}")),
+            home.join(format!(".local/share/mise/shims/{bin}")),
         ]);
+
+        #[cfg(target_os = "macos")]
+        candidates.push(home.join(format!("Library/pnpm/{bin}")));
+
         candidates.extend(find_versioned_bin_named(
             &home.join(".nvm/versions/node"),
-            "codex",
+            bin,
         ));
         candidates.extend(find_versioned_bin_named(
             &home.join(".fnm/node-versions"),
-            "codex",
+            bin,
         ));
+
+        #[cfg(target_os = "macos")]
+        candidates.extend(find_versioned_bin_named(
+            &home.join("Library/Application Support/fnm/node-versions"),
+            bin,
+        ));
+
         #[cfg(target_os = "windows")]
         {
             if let Some(local) = dirs::data_local_dir() {
                 candidates.extend(find_versioned_bin_named(
                     &local.join("fnm/node-versions"),
-                    "codex",
+                    bin,
                 ));
             }
-        }
-    }
-
-    candidates
-}
-fn claude_candidates() -> Vec<PathBuf> {
-    let mut candidates = vec![];
-
-    #[cfg(target_os = "windows")]
-    {
-        candidates.push(PathBuf::from("C:/Program Files/nodejs/claude.cmd"));
-        if let Some(home) = dirs::home_dir() {
-            candidates.extend([
-                home.join("AppData/Roaming/npm/claude.cmd"),
-                home.join(".local/bin/claude.exe"),
-                home.join("scoop/shims/claude.cmd"),
-            ]);
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        candidates.extend([
-            PathBuf::from("/opt/homebrew/bin/claude"),
-            PathBuf::from("/usr/local/bin/claude"),
-            PathBuf::from("/usr/bin/claude"),
-        ]);
-    }
-
-    if let Some(home) = dirs::home_dir() {
-        candidates.extend([
-            home.join(".local/bin/claude"),
-            home.join("bin/claude"),
-            home.join(".volta/bin/claude"),
-            home.join(".asdf/shims/claude"),
-            home.join(".bun/bin/claude"),
-            home.join(".npm-global/bin/claude"),
-        ]);
-
-        #[cfg(not(target_os = "windows"))]
-        candidates.push(home.join("Library/pnpm/claude"));
-
-        candidates.extend(find_nvm_claude_bins(&home));
-        candidates.extend(find_fnm_claude_bins(&home));
-    }
-
-    candidates
-}
-
-fn find_nvm_claude_bins(home: &Path) -> Vec<PathBuf> {
-    find_versioned_bin_candidates(&home.join(".nvm/versions/node"))
-}
-
-fn find_fnm_claude_bins(home: &Path) -> Vec<PathBuf> {
-    let mut candidates = find_versioned_bin_candidates(&home.join(".fnm/node-versions"));
-
-    #[cfg(target_os = "macos")]
-    candidates.extend(find_versioned_bin_candidates(
-        &home.join("Library/Application Support/fnm/node-versions"),
-    ));
-
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(local) = dirs::data_local_dir() {
-            candidates.extend(find_versioned_bin_candidates(
-                &local.join("fnm/node-versions"),
+            // nvm-windows: %USERPROFILE%/AppData/Roaming/nvm/v<ver>/
+            candidates.extend(find_versioned_bin_named(
+                &home.join("AppData/Roaming/nvm"),
+                bin,
             ));
         }
-    }
-
-    candidates
-}
-
-fn find_versioned_bin_candidates(root: &Path) -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    let Ok(entries) = fs::read_dir(root) else {
-        return candidates;
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        candidates.push(path.join("bin/claude"));
-        #[cfg(target_os = "windows")]
-        {
-            candidates.push(path.join("bin/claude.cmd"));
-            candidates.push(path.join("Scripts/claude.exe"));
-        }
-        candidates.extend(find_versioned_bin_candidates(&path));
     }
 
     candidates
@@ -487,11 +436,23 @@ fn find_versioned_bin_named(root: &Path, bin_name: &str) -> Vec<PathBuf> {
     candidates
 }
 #[cfg(target_os = "windows")]
-fn find_claude_with_shell(shell: &str) -> Option<String> {
-    let command =
-        "Get-Command claude -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source";
-    let output = std::process::Command::new(shell)
-        .args(["-NoProfile", "-Command", command])
+fn find_command_on_windows(command_name: &str) -> Option<String> {
+    // Resolve `command` via PowerShell's `Get-Command -All`, then prefer
+    // directly-executable wrappers (.cmd / .exe / .bat) over .ps1. portable-pty
+    // can't CreateProcess a .ps1 directly, and even when invoked through a
+    // shell a quoted .ps1 path is parsed by PowerShell as a string literal
+    // (needs the `&` call operator) — both failure modes we want to avoid.
+    // `[Console]::OutputEncoding = UTF8` keeps non-ASCII paths (CJK usernames,
+    // etc.) intact across the stdio pipe.
+    let script = format!(
+        r#"$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$all = Get-Command {name} -All -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+$exe = $all | Where-Object {{ $_ -match '\.(cmd|exe|bat)$' }} | Select-Object -First 1
+if ($exe) {{ $exe }} elseif ($all) {{ $all | Select-Object -First 1 }}"#,
+        name = command_name
+    );
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", script.as_str()])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
@@ -518,30 +479,6 @@ fn find_claude_with_shell(shell: &str) -> Option<String> {
     "#;
     let output = std::process::Command::new(shell)
         .args(["-l", "-c", command])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        None
-    } else {
-        Some(path)
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn find_command_with_shell(shell: &str, command_name: &str) -> Option<String> {
-    let command = format!(
-        "Get-Command {} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source",
-        command_name
-    );
-    let output = std::process::Command::new(shell)
-        .args(["-NoProfile", "-Command", command.as_str()])
-        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
 
