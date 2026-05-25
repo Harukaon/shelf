@@ -470,6 +470,36 @@ export function createTerminalTab(
     active: false,
   };
 
+  // Red-dot semantics mirror standard terminals (iTerm2 / Ghostty / Kitty):
+  // light the dot when the program sends an explicit "attention" signal, not
+  // on every byte. Claude Code emits OSC 9 (preferredNotifChannel=iterm2),
+  // OSC 777 (Ghostty/Kitty default), or BEL (preferredNotifChannel=terminal_bell).
+  // Codex CLI emits OSC 9 or BEL via tui.notification_method, on
+  // agent-turn-complete / approval-requested / plan-mode-prompt. Plain zsh
+  // BELs on completion errors and the `notify` option — also a legitimate
+  // attention trigger.
+  const markUnreadIfBackground = () => {
+    if (options?.suppressUnreadWhile?.(tabId) === true) return;
+    if (tabInfo.active) return;
+    if (tabInfo.hasUnreadOutput) return;
+    tabInfo.hasUnreadOutput = true;
+    options?.onUnreadChange?.(tabId, true);
+  };
+  terminal.onBell(() => markUnreadIfBackground());
+  // OSC 9: iTerm2 growl notification. `OSC 9 ; 4 ; ...` is iTerm2's progress
+  // indicator (continuous updates during long ops) — explicitly skip that.
+  terminal.parser.registerOscHandler(9, (data: string) => {
+    if (!data.startsWith("4;")) markUnreadIfBackground();
+    return false;
+  });
+  // OSC 777: rxvt-unicode / Ghostty notification. Only the `notify;` subcommand
+  // is a notification; other subcodes (preexec, precmd) are shell-integration
+  // hooks that fire constantly and must not light the dot.
+  terminal.parser.registerOscHandler(777, (data: string) => {
+    if (data.startsWith("notify;")) markUnreadIfBackground();
+    return false;
+  });
+
   let pty: IPty | undefined;
   let fallbackUsed = false;
   const spawnStartedAt = Date.now();
@@ -516,11 +546,6 @@ export function createTerminalTab(
     const bindPty = (boundPty: IPty, fallback: boolean) => {
       boundPty.onData((data: Uint8Array) => {
         terminal.write(data);
-        const suppressUnread = options?.suppressUnreadWhile?.(tabId) === true;
-        if (!suppressUnread && !tabInfo.active && !tabInfo.hasUnreadOutput) {
-          tabInfo.hasUnreadOutput = true;
-          options?.onUnreadChange?.(tabId, true);
-        }
         if (!fallback && commandFallback?.fallbackShell && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS) {
           earlyOutput += decoder.decode(data, { stream: true });
           if (earlyOutput.length > COMMAND_FALLBACK_MAX_OUTPUT) {
