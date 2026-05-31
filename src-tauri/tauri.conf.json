@@ -1,6 +1,6 @@
 {
   "productName": "Shelf",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "identifier": "com.shelf.app",
   "build": {
     "frontendDist": "../dist",
