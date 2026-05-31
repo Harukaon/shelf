@@ -174,6 +174,33 @@ fn parse_remote_session_file(content: &str, filename: &str, _ssh_target: &SshTar
     }))
 }
 
+/// Column names present in the Codex `threads` table. Older Codex builds predate
+/// the millisecond columns (`created_at_ms`/`updated_at_ms`) and even
+/// `first_user_message`/`cli_version`. SQLite resolves every column name at
+/// prepare time — so referencing a missing column is a hard "no such column"
+/// error even inside `coalesce()` — hence we introspect and only emit columns
+/// that actually exist.
+fn codex_thread_columns(conn: &Connection) -> std::collections::HashSet<String> {
+    let mut cols = std::collections::HashSet::new();
+    if let Ok(mut stmt) = conn.prepare("PRAGMA table_info(threads)") {
+        if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(1)) {
+            cols.extend(rows.flatten());
+        }
+    }
+    cols
+}
+
+/// Millisecond-timestamp SELECT expression for a Codex timestamp column, falling
+/// back to `<base> * 1000` when the `<base>_ms` variant is absent.
+fn codex_ms_expr(cols: &std::collections::HashSet<String>, base: &str) -> String {
+    let ms = format!("{}_ms", base);
+    if cols.contains(&ms) {
+        format!("coalesce({}, {} * 1000)", ms, base)
+    } else {
+        format!("{} * 1000", base)
+    }
+}
+
 fn scan_codex_sessions_remote(workspace_path: &str, ssh_target: &SshTarget) -> Result<Vec<Session>, String> {
     // Find the newest codex state db on the remote host
     let find_cmd = "ls -t ~/.codex/state_*.sqlite 2>/dev/null | head -1";
@@ -182,13 +209,41 @@ fn scan_codex_sessions_remote(workspace_path: &str, ssh_target: &SshTarget) -> R
         return Ok(Vec::new());
     }
 
-    // Query codex sessions via remote sqlite3
+    // Introspect remote schema so we only reference columns that exist.
+    // Older Codex versions lack created_at_ms / updated_at_ms (and possibly
+    // first_user_message / cli_version), which caused "no such column" errors.
+    let schema_cmd = format!(
+        "sqlite3 '{}' -separator '|' \"PRAGMA table_info(threads);\"",
+        db_path_remote
+    );
+    let schema_out = ssh_exec(ssh_target, &schema_cmd)?;
+    let remote_cols: std::collections::HashSet<String> = schema_out
+        .lines()
+        .filter_map(|line| line.split('|').nth(1))
+        .map(|s| s.to_string())
+        .collect();
+
+    let has = |col: &str| remote_cols.contains(col);
+    let created_expr = codex_ms_expr(&remote_cols, "created_at");
+    let updated_expr = codex_ms_expr(&remote_cols, "updated_at");
+
+    let first_user_msg_sel = if has("first_user_message") {
+        "coalesce(first_user_message,'')"
+    } else {
+        "''"
+    };
+    let cli_version_sel = if has("cli_version") {
+        "coalesce(cli_version,'')"
+    } else {
+        "''"
+    };
+
+    // Build SELECT clause — always 8 fields in the same order for the parser below
     let sql = format!(
-        "select id, coalesce(title,''), coalesce(cwd,''), coalesce(first_user_message,''), \
-         coalesce(created_at_ms, created_at*1000), coalesce(updated_at_ms, updated_at*1000), \
-         coalesce(rollout_path,''), coalesce(cli_version,'') \
+        "select id, coalesce(title,''), coalesce(cwd,''), {}, {}, {}, coalesce(rollout_path,''), {} \
          from threads where archived=0 \
-         order by coalesce(updated_at_ms, updated_at*1000) desc, id desc"
+         order by {} desc, id desc",
+        first_user_msg_sel, created_expr, updated_expr, cli_version_sel, updated_expr
     );
     let query_cmd = format!("sqlite3 '{}' -separator '|' \"{}\"", db_path_remote, sql.replace('"', "\\\""));
     let output = ssh_exec(ssh_target, &query_cmd)?;
@@ -244,21 +299,32 @@ fn scan_codex_sessions_local(workspace_path: &str) -> Result<Vec<Session>, Strin
     }
 
     let conn = Connection::open(&db_path).map_err(|e| format!("Open Codex db: {}", e))?;
+    let cols = codex_thread_columns(&conn);
+    let has = |col: &str| cols.contains(col);
+
+    let created_expr = codex_ms_expr(&cols, "created_at");
+    let updated_expr = codex_ms_expr(&cols, "updated_at");
+    let first_user_msg_sel = if has("first_user_message") {
+        "coalesce(first_user_message,'')".to_string()
+    } else {
+        "''".to_string()
+    };
+    let cli_version_sel = if has("cli_version") {
+        "coalesce(cli_version,'')".to_string()
+    } else {
+        "''".to_string()
+    };
+
+    let sql = format!(
+        "select id, coalesce(title,''), coalesce(cwd,''), {}, {}, {}, coalesce(rollout_path,''), {} \
+         from threads where archived=0 \
+         order by {} desc, id desc",
+        first_user_msg_sel, created_expr, updated_expr, cli_version_sel, updated_expr
+    );
+
     let workspace_candidates: Vec<String> = path_candidates(&workspace_path);
     let mut stmt = conn
-        .prepare(
-            "select id, \
-                    coalesce(title, ''), \
-                    coalesce(cwd, ''), \
-                    coalesce(first_user_message, ''), \
-                    coalesce(created_at_ms, created_at * 1000), \
-                    coalesce(updated_at_ms, updated_at * 1000), \
-                    coalesce(rollout_path, ''), \
-                    coalesce(cli_version, '') \
-             from threads \
-             where archived = 0 \
-             order by coalesce(updated_at_ms, updated_at * 1000) desc, id desc",
-        )
+        .prepare(&sql)
         .map_err(|e| format!("Prepare Codex query: {}", e))?;
     let rows = stmt
         .query_map([], |row| {
@@ -562,20 +628,22 @@ fn rename_codex_session(session_id: &str, new_title: &str) -> Result<(), String>
     }
 
     let conn = Connection::open(&db_path).map_err(|e| format!("Open Codex db: {}", e))?;
+    let cols = codex_thread_columns(&conn);
     let now = Utc::now();
-    let changed = conn
-        .execute(
-            "update threads \
-             set title = ?1, updated_at = ?2, updated_at_ms = ?3 \
-             where id = ?4 and archived = 0",
-            params![
-                new_title,
-                now.timestamp(),
-                now.timestamp_millis(),
-                session_id
-            ],
-        )
-        .map_err(|e| format!("Rename Codex session: {}", e))?;
+
+    // Only SET updated_at_ms when the column exists (older Codex lacks it).
+    let sql = if cols.contains("updated_at_ms") {
+        "update threads set title = ?1, updated_at = ?2, updated_at_ms = ?3 where id = ?4 and archived = 0"
+    } else {
+        "update threads set title = ?1, updated_at = ?2 where id = ?3 and archived = 0"
+    };
+
+    let changed = if cols.contains("updated_at_ms") {
+        conn.execute(sql, params![new_title, now.timestamp(), now.timestamp_millis(), session_id])
+    } else {
+        conn.execute(sql, params![new_title, now.timestamp(), session_id])
+    }.map_err(|e| format!("Rename Codex session: {}", e))?;
+
     if changed == 0 {
         return Err(format!("Codex session not found for id: {}", session_id));
     }
@@ -589,6 +657,7 @@ fn delete_codex_session(session_id: &str) -> Result<(), String> {
     }
 
     let mut conn = Connection::open(&db_path).map_err(|e| format!("Open Codex db: {}", e))?;
+    let cols = codex_thread_columns(&conn);
     let rollout_path = {
         let tx = conn
             .transaction()
@@ -600,21 +669,37 @@ fn delete_codex_session(session_id: &str) -> Result<(), String> {
                 |row| row.get(0),
             )
             .map_err(|e| format!("Codex session not found for id {}: {}", session_id, e))?;
-
         let now = Utc::now();
-        let changed = tx
-            .execute(
-                "update threads \
-                 set archived = 1, archived_at = ?1, updated_at = ?2, updated_at_ms = ?3 \
-                 where id = ?4 and archived = 0",
-                params![
-                    now.timestamp(),
-                    now.timestamp(),
-                    now.timestamp_millis(),
-                    session_id
-                ],
-            )
-            .map_err(|e| format!("Archive Codex session: {}", e))?;
+
+        // Build UPDATE dynamically: archived_at / updated_at_ms may not exist
+        // in older Codex schemas.
+        let set_archived_at = if cols.contains("archived_at") {
+            "archived_at = ?1, "
+        } else {
+            ""
+        };
+        let set_updated_at_ms = if cols.contains("updated_at_ms") {
+            "updated_at_ms = ?3, "
+        } else {
+            ""
+        };
+        let sql = format!(
+            "update threads set archived = 1, {}updated_at = ?2, {}where id = ?4 and archived = 0",
+            set_archived_at, set_updated_at_ms
+        );
+
+        let changed = if cols.contains("updated_at_ms") {
+            tx.execute(&sql, params![now.timestamp(), now.timestamp(), now.timestamp_millis(), session_id])
+        } else if cols.contains("archived_at") {
+            tx.execute(&sql, params![now.timestamp(), now.timestamp(), session_id])
+        } else {
+            // Neither column — remove both placeholders
+            let sql_fallback = format!(
+                "update threads set archived = 1, updated_at = ?1 where id = ?2 and archived = 0"
+            );
+            tx.execute(&sql_fallback, params![now.timestamp(), session_id])
+        }.map_err(|e| format!("Archive Codex session: {}", e))?;
+
         if changed == 0 {
             return Err(format!("Codex session not found for id: {}", session_id));
         }
