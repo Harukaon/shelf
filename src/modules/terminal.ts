@@ -608,7 +608,6 @@ export function createTerminalTab(
     };
 
     bindPty(pty, false);
-    const isMac = navigator.platform.toLowerCase().includes("mac");
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
         onPtyWrite(tabId, "\x1b[13;2u");
@@ -616,28 +615,15 @@ export function createTerminalTab(
         return false;
       }
       // Ctrl+V → paste clipboard *text*. Standard terminals (and Codex) treat
-      // Ctrl+V as text paste / Alt+V as image paste, but xterm otherwise forwards
-      // a raw 0x16 that Codex misreads as "paste image" → it errors with
-      // "Failed to paste image: no image on clipboard" when the clipboard is text.
+      // Ctrl+V as text paste, but xterm otherwise forwards a raw 0x16 that Codex
+      // misreads as "paste image" → it errors with "Failed to paste image: no
+      // image on clipboard" when the clipboard contains text.
       if (
         event.type === "keydown" &&
         event.ctrlKey && !event.metaKey && !event.altKey &&
         (event.code === "KeyV" || event.key === "v" || event.key === "V")
       ) {
         void pasteClipboardText(terminal);
-        event.preventDefault();
-        return false;
-      }
-      // macOS: Option+V emits "√" instead of the Alt+v sequence Codex needs to
-      // paste an image, so forward the proper Alt+v VT byte sequence. Windows/Linux
-      // already send this for Alt+V natively, so we only remap it on macOS.
-      if (
-        isMac &&
-        event.type === "keydown" &&
-        event.altKey && !event.ctrlKey && !event.metaKey &&
-        event.code === "KeyV"
-      ) {
-        onPtyWrite(tabId, "\x1bv");
         event.preventDefault();
         return false;
       }
