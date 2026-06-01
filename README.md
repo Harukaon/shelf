@@ -18,7 +18,11 @@ Shelf wraps Claude Code with a clean GUI:
 ## Screenshot
 
 <p align="center">
-  <img src="logo/shelf-logo.svg" width="120" alt="Shelf Logo" />
+  <img src="logo/ai-preview.jpg" width="640" alt="Shelf AI Session Organizer" />
+</p>
+
+<p align="center">
+  <img src="logo/home-screenshot.png" width="640" alt="Shelf Home" />
 </p>
 
 ## Features
