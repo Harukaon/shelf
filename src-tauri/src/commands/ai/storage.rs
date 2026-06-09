@@ -99,10 +99,5 @@ pub(super) fn load_config() -> ShelfConfig {
     fs::read_to_string(config_path())
         .ok()
         .and_then(|content| serde_json::from_str(&content).ok())
-        .unwrap_or(ShelfConfig {
-            workspaces: Vec::new(),
-            shell: "zsh".to_string(),
-            language: "en".to_string(),
-            pinned: Vec::new(),
-        })
+        .unwrap_or_default()
 }

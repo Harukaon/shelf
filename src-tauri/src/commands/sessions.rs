@@ -1,5 +1,6 @@
-use crate::session::{sanitize_path, Session, SessionProvider, SshTarget};
 use crate::commands::ssh::ssh_exec;
+use crate::commands::workspace::{load_config, save_config};
+use crate::session::{sanitize_path, Session, SessionProvider, SshTarget};
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection};
 use std::fs;
@@ -8,35 +9,95 @@ use std::path::{Path, PathBuf};
 #[tauri::command]
 pub async fn scan_sessions(workspace_path: String, ssh: Option<SshTarget>) -> Result<Vec<Session>, String> {
     if let Some(ssh_target) = ssh {
-        return tauri::async_runtime::spawn_blocking(move || scan_sessions_remote(&workspace_path, &ssh_target))
-            .await
-            .map_err(|e| format!("SSH scan failed: {}", e))?;
-    }
-    tauri::async_runtime::spawn_blocking(move || crate::session::scan_sessions(&workspace_path))
+        return tauri::async_runtime::spawn_blocking(move || {
+            let mut sessions = scan_sessions_remote(&workspace_path, &ssh_target)?;
+            apply_session_title_overrides(&mut sessions);
+            Ok(sessions)
+        })
         .await
-        .map_err(|e| format!("Scan failed: {}", e))?
+        .map_err(|e| format!("SSH scan failed: {}", e))?;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut sessions = crate::session::scan_sessions(&workspace_path)?;
+        apply_session_title_overrides(&mut sessions);
+        Ok(sessions)
+    })
+    .await
+    .map_err(|e| format!("Scan failed: {}", e))?
 }
 
 /// Synchronous scan for internal use (AI tools, etc.) that don't use SSH.
 pub fn scan_sessions_sync(workspace_path: &str) -> Result<Vec<Session>, String> {
-    crate::session::scan_sessions(workspace_path)
+    let mut sessions = crate::session::scan_sessions(workspace_path)?;
+    apply_session_title_overrides(&mut sessions);
+    Ok(sessions)
 }
 
 #[tauri::command]
 pub async fn scan_codex_sessions(workspace_path: String, ssh: Option<SshTarget>) -> Result<Vec<Session>, String> {
     if let Some(ssh_target) = ssh {
-        return tauri::async_runtime::spawn_blocking(move || scan_codex_sessions_remote(&workspace_path, &ssh_target))
-            .await
-            .map_err(|e| format!("SSH Codex scan failed: {}", e))?;
-    }
-    tauri::async_runtime::spawn_blocking(move || scan_codex_sessions_local(&workspace_path))
+        return tauri::async_runtime::spawn_blocking(move || {
+            let mut sessions = scan_codex_sessions_remote(&workspace_path, &ssh_target)?;
+            apply_session_title_overrides(&mut sessions);
+            Ok(sessions)
+        })
         .await
-        .map_err(|e| format!("Codex scan failed: {}", e))?
+        .map_err(|e| format!("SSH Codex scan failed: {}", e))?;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut sessions = scan_codex_sessions_local(&workspace_path)?;
+        apply_session_title_overrides(&mut sessions);
+        Ok(sessions)
+    })
+    .await
+    .map_err(|e| format!("Codex scan failed: {}", e))?
 }
 
 /// Synchronous codex scan for internal use (AI tools, etc.) that don't use SSH.
 pub fn scan_codex_sessions_sync(workspace_path: &str) -> Result<Vec<Session>, String> {
-    scan_codex_sessions_local(workspace_path)
+    let mut sessions = scan_codex_sessions_local(workspace_path)?;
+    apply_session_title_overrides(&mut sessions);
+    Ok(sessions)
+}
+
+fn apply_session_title_overrides(sessions: &mut [Session]) {
+    let config = load_config();
+    for session in sessions {
+        let Some(title) = config.session_titles.get(&session.id) else {
+            continue;
+        };
+        let trimmed = title.trim();
+        if !trimmed.is_empty() {
+            session.display_title = trimmed.to_string();
+        }
+    }
+}
+
+fn set_session_title_override(session_id: &str, title: &str) -> Result<(), String> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Err("Session id is required".to_string());
+    }
+
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("Title is required".to_string());
+    }
+
+    let mut config = load_config();
+    config
+        .session_titles
+        .insert(session_id.to_string(), title.to_string());
+    save_config(&config)
+}
+
+fn remove_session_title_override(session_id: &str) {
+    let mut config = load_config();
+    if config.session_titles.remove(session_id).is_some() {
+        if let Err(e) = save_config(&config) {
+            eprintln!("[Shelf] failed to remove session title override: {}", e);
+        }
+    }
 }
 
 fn scan_sessions_remote(workspace_path: &str, ssh_target: &SshTarget) -> Result<Vec<Session>, String> {
@@ -485,57 +546,14 @@ pub fn rename_session(
     new_title: String,
     provider: Option<SessionProvider>,
 ) -> Result<(), String> {
-    if matches!(provider, Some(SessionProvider::Codex)) {
-        return rename_codex_session(&session_id, &new_title);
+    set_session_title_override(&session_id, &new_title)?;
+    if let Some(provider) = provider {
+        eprintln!(
+            "[Shelf] stored local title override for {:?} session {}",
+            provider, session_id
+        );
     }
-
-    println!(
-        "[Rust] rename_session: id={}, title={}",
-        session_id, new_title
-    );
-    let projects_dir = if let Some(home) = dirs::home_dir() {
-        home.join(".claude").join("projects")
-    } else {
-        return Err("Cannot find home directory".to_string());
-    };
-    println!("[Rust] projects_dir: {:?}", projects_dir);
-
-    let entries =
-        fs::read_dir(&projects_dir).map_err(|e| format!("Cannot read projects dir: {}", e))?;
-
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("Dir entry error: {}", e))?;
-        let project_dir = entry.path();
-        if !project_dir.is_dir() {
-            continue;
-        }
-        let jsonl_path = project_dir.join(format!("{}.jsonl", session_id));
-        if jsonl_path.exists() {
-            println!("[Rust] found jsonl: {:?}", jsonl_path);
-            let entry = serde_json::json!({
-                "type": "custom-title",
-                "customTitle": new_title,
-                "sessionId": session_id,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-            });
-            let line =
-                serde_json::to_string(&entry).map_err(|e| format!("Serialize error: {}", e))?;
-            let mut content = fs::read_to_string(&jsonl_path).unwrap_or_default();
-            if !content.ends_with('\n') {
-                content.push('\n');
-            }
-            content.push_str(&line);
-            content.push('\n');
-            fs::write(&jsonl_path, content).map_err(|e| format!("Write error: {}", e))?;
-            println!("[Rust] rename_session: written OK");
-            return Ok(());
-        }
-    }
-    if provider.is_none() {
-        rename_codex_session(&session_id, &new_title)
-    } else {
-        Err(format!("Session file not found for id: {}", session_id))
-    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -549,7 +567,9 @@ pub fn delete_session(
         return delete_remote_session(&session_id, provider, &ssh_target);
     }
     if matches!(provider, Some(SessionProvider::Codex)) {
-        return delete_codex_session(&session_id);
+        delete_codex_session(&session_id)?;
+        remove_session_title_override(&session_id);
+        return Ok(());
     }
 
     let projects_dir = dirs::home_dir()
@@ -570,11 +590,14 @@ pub fn delete_session(
         if jsonl_path.exists() {
             trash::delete(&jsonl_path).map_err(|e| format!("Trash error: {}", e))?;
             println!("[Rust] delete_session: moved to trash {:?}", jsonl_path);
+            remove_session_title_override(&session_id);
             return Ok(());
         }
     }
     if provider.is_none() {
-        delete_codex_session(&session_id)
+        delete_codex_session(&session_id)?;
+        remove_session_title_override(&session_id);
+        Ok(())
     } else {
         Err(format!("Session file not found for id: {}", session_id))
     }
@@ -618,35 +641,7 @@ fn delete_remote_session(
             session_id
         ));
     }
-    Ok(())
-}
-
-fn rename_codex_session(session_id: &str, new_title: &str) -> Result<(), String> {
-    let db_path = codex_state_db_path()?;
-    if !db_path.exists() {
-        return Err("Codex state database not found".to_string());
-    }
-
-    let conn = Connection::open(&db_path).map_err(|e| format!("Open Codex db: {}", e))?;
-    let cols = codex_thread_columns(&conn);
-    let now = Utc::now();
-
-    // Only SET updated_at_ms when the column exists (older Codex lacks it).
-    let sql = if cols.contains("updated_at_ms") {
-        "update threads set title = ?1, updated_at = ?2, updated_at_ms = ?3 where id = ?4 and archived = 0"
-    } else {
-        "update threads set title = ?1, updated_at = ?2 where id = ?3 and archived = 0"
-    };
-
-    let changed = if cols.contains("updated_at_ms") {
-        conn.execute(sql, params![new_title, now.timestamp(), now.timestamp_millis(), session_id])
-    } else {
-        conn.execute(sql, params![new_title, now.timestamp(), session_id])
-    }.map_err(|e| format!("Rename Codex session: {}", e))?;
-
-    if changed == 0 {
-        return Err(format!("Codex session not found for id: {}", session_id));
-    }
+    remove_session_title_override(session_id);
     Ok(())
 }
 

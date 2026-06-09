@@ -22,38 +22,17 @@ fn app_state_path() -> PathBuf {
         .join("state.json")
 }
 
-fn default_shell() -> String {
-    #[cfg(target_os = "windows")]
-    {
-        "powershell".to_string()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        "zsh".to_string()
-    }
-}
-
-fn load_config() -> ShelfConfig {
+pub(crate) fn load_config() -> ShelfConfig {
     let path = config_path();
     if path.exists() {
         let content = fs::read_to_string(&path).unwrap_or_default();
-        serde_json::from_str(&content).unwrap_or(ShelfConfig {
-            workspaces: Vec::new(),
-            shell: default_shell(),
-            language: "en".to_string(),
-            pinned: Vec::new(),
-        })
+        serde_json::from_str(&content).unwrap_or_default()
     } else {
-        ShelfConfig {
-            workspaces: Vec::new(),
-            shell: default_shell(),
-            language: "en".to_string(),
-            pinned: Vec::new(),
-        }
+        ShelfConfig::default()
     }
 }
 
-fn save_config(config: &ShelfConfig) -> Result<(), String> {
+pub(crate) fn save_config(config: &ShelfConfig) -> Result<(), String> {
     let path = config_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {}", e))?;

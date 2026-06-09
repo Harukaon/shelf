@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -67,6 +68,7 @@ pub struct Workspace {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ShelfConfig {
+    #[serde(default)]
     pub workspaces: Vec<Workspace>,
     #[serde(default = "default_shell")]
     pub shell: String,
@@ -74,10 +76,31 @@ pub struct ShelfConfig {
     pub language: String,
     #[serde(default)]
     pub pinned: Vec<String>,
+    #[serde(default)]
+    pub session_titles: BTreeMap<String, String>,
+}
+
+impl Default for ShelfConfig {
+    fn default() -> Self {
+        Self {
+            workspaces: Vec::new(),
+            shell: default_shell(),
+            language: default_lang(),
+            pinned: Vec::new(),
+            session_titles: BTreeMap::new(),
+        }
+    }
 }
 
 fn default_shell() -> String {
-    "zsh".to_string()
+    #[cfg(target_os = "windows")]
+    {
+        "powershell".to_string()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "zsh".to_string()
+    }
 }
 fn default_lang() -> String {
     "en".to_string()
