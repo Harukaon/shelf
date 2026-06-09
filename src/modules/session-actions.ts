@@ -33,7 +33,7 @@ export function _onTabAdd(app: any) {
 
 export async function _renameSessionPrompt(app: any, session: Session) {
   const input = document.createElement("input");
-  input.value = session.display_title;
+  input.value = app._displayTitleForSession(session);
 
   const row = document.createElement("div");
   row.className = "settings-row";
@@ -51,6 +51,12 @@ export async function _renameSessionPrompt(app: any, session: Session) {
           const newName = input.value.trim();
           if (!newName) return false;
           await tauriInvoke("rename_session", { sessionId: session.id, newTitle: newName, provider: session.provider });
+          app.sessionTitleOverrides.set(session.id, newName);
+          for (const sessions of app.ws.sessions.values()) {
+            for (const item of sessions) {
+              if (item.id === session.id) item.display_title = newName;
+            }
+          }
           for (const ws of app.ws.workspaces) await app._refreshWorkspaceSessions(ws.path, ws.provider, "rename");
         },
       },
@@ -74,7 +80,7 @@ export async function _deleteSession(app: any, session: Session, wsPath: string)
   if (sshTarget) {
     const confirmed = await confirmDialog({
       title: t("confirm.delete_session_title"),
-      description: t("confirm.delete_session_ssh_message", session.display_title),
+      description: t("confirm.delete_session_ssh_message", app._displayTitleForSession(session)),
       confirmLabel: t("confirm.delete"),
       cancelLabel: t("settings.cancel"),
       danger: true,
@@ -319,7 +325,7 @@ export function _createBlankTab(app: any, cwd?: string) {
 }
 
 export function _openSessionTab(app: any, session: Session, wsPath: string) {
-  console.log(`[Shelf] openSessionTab id=${session.id} title="${session.display_title}" tabs=${app.tabs.tabsMap.size}`);
+  console.log(`[Shelf] openSessionTab id=${session.id} title="${app._displayTitleForSession(session)}" tabs=${app.tabs.tabsMap.size}`);
   for (const [, tab] of app.tabs.tabsMap) {
     if (tab.sessionId === session.id && tab.sessionProvider === session.provider) {
       app.tabs.activateTab(tab.id);

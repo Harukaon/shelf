@@ -48,6 +48,7 @@ class App {
   claudePath = "claude";
   codexPath = "codex";
   pinnedIds = new Set<string>();
+  sessionTitleOverrides = new Map<string, string>();
   pendingSessionTabs = new Map<string, PendingSessionTab>();
   sessionScanSeq = new Map<string, number>();
   restoredState: SavedAppState | null = null;
@@ -215,7 +216,7 @@ class App {
   }
 
   private _displayTitleForSession(session: Session): string {
-    return session.display_title;
+    return this.sessionTitleOverrides.get(session.id) || session.display_title;
   }
 
   private _createStartTab() {
@@ -268,6 +269,14 @@ class App {
       if (s?.shell) this.shellSetting = s.shell;
       if (s?.language) { setLang(s.language); }
       if (s?.pinned) { this.pinnedIds = new Set(s.pinned); }
+      if (s?.session_titles || s?.sessionTitles) {
+        const titles = s.session_titles || s.sessionTitles;
+        this.sessionTitleOverrides = new Map(
+          Object.entries(titles as Record<string, string>)
+            .map(([id, title]) => [id, String(title).trim()] as const)
+            .filter(([, title]) => title.length > 0),
+        );
+      }
     } catch (_) { /* use default */ }
   }
 
@@ -415,6 +424,7 @@ class App {
       scanError = e;
       return [];
     });
+    this._applySessionTitleOverridesToSessions(sessions);
     if (this.sessionScanSeq.get(key) !== seq) {
       return { sessions: this.ws.sessions.get(key) || [], changed: false };
     }
@@ -423,6 +433,13 @@ class App {
     }
     const changed = this._applySessionSnapshot(workspacePath, provider, sessions, reason);
     return { sessions, changed };
+  }
+
+  private _applySessionTitleOverridesToSessions(sessions: Session[]) {
+    for (const session of sessions) {
+      const title = this.sessionTitleOverrides.get(session.id);
+      if (title) session.display_title = title;
+    }
   }
 
   private _applySessionSnapshot(
@@ -462,7 +479,7 @@ class App {
   private _sessionFingerprint(session: Session): string {
     return [
       session.id,
-      session.display_title,
+      this._displayTitleForSession(session),
       session.custom_title || "",
       session.ai_title || "",
       session.first_prompt || "",

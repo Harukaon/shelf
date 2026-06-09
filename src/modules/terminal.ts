@@ -443,11 +443,6 @@ export function applyTerminalTheme(terminal: Terminal | null | undefined, mode: 
   terminal.refresh(0, Math.max(0, terminal.rows - 1));
 }
 
-/**
- * Paste clipboard text via xterm's bracketed-paste-aware `paste()` (which fires
- * onData → onPtyWrite). This is what GUI terminals do for Ctrl+V; forwarding the
- * raw 0x16 instead makes Codex try to "paste image" and fail on text clipboards.
- */
 async function pasteClipboardText(terminal: Terminal) {
   try {
     const text = await navigator.clipboard.readText();
@@ -608,17 +603,15 @@ export function createTerminalTab(
     };
 
     bindPty(pty, false);
+    const isMac = navigator.platform.toLowerCase().includes("mac");
     terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
         onPtyWrite(tabId, "\x1b[13;2u");
         event.preventDefault();
         return false;
       }
-      // Ctrl+V → paste clipboard *text*. Standard terminals (and Codex) treat
-      // Ctrl+V as text paste, but xterm otherwise forwards a raw 0x16 that Codex
-      // misreads as "paste image" → it errors with "Failed to paste image: no
-      // image on clipboard" when the clipboard contains text.
       if (
+        !isMac &&
         event.type === "keydown" &&
         event.ctrlKey && !event.metaKey && !event.altKey &&
         (event.code === "KeyV" || event.key === "v" || event.key === "V")

@@ -139,6 +139,7 @@ pub fn get_settings() -> Result<serde_json::Value, String> {
         "shell": config.shell,
         "language": config.language,
         "pinned": config.pinned,
+        "session_titles": config.session_titles,
     }))
 }
 

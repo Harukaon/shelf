@@ -372,7 +372,7 @@ export function _renderSessionItem(app: any, session: Session, wsPath: string, s
   item.className = `session-item${isActive ? " active" : ""}${isFocused ? " focused" : ""}`;
   item.innerHTML = `
     <span class="dot-icon${isFocused ? " focused" : ""}"></span>
-    <span class="session-title" title="${escapeHtml(session.display_title)}">${escapeHtml(title)}</span>
+    <span class="session-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
     ${showProviderBadge ? `<span class="provider-badge ${session.provider}">${badge}</span>` : ""}
     <span class="session-date">${formatDate(session.started_at)}</span>`;
   item.addEventListener("click", (e) => {

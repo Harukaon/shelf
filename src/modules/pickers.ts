@@ -13,6 +13,7 @@ export function showTerminalMenu(
 export function showSessionPicker(
   allSessions: { session: Session; workspacePath: string }[],
   onSelect: (session: Session, wsPath: string) => void,
+  displayTitleForSession: (session: Session) => string = (session) => session.display_title,
 ) {
   if (allSessions.length === 0) return;
 
@@ -28,16 +29,17 @@ export function showSessionPicker(
   const renderFiltered = (filter: string) => {
     list.innerHTML = "";
     const filtered = allSessions.filter(({ session }) =>
-      session.display_title.toLowerCase().includes(filter.toLowerCase()),
+      displayTitleForSession(session).toLowerCase().includes(filter.toLowerCase()),
     );
     if (filtered.length === 0) {
       list.innerHTML = `<div class="picker-empty">${t("picker.empty")}</div>`;
       return;
     }
     for (const { session, workspacePath } of filtered.slice(0, 20)) {
+      const title = displayTitleForSession(session);
       const item = document.createElement("div");
       item.className = "picker-item";
-      item.innerHTML = `<i data-lucide="message-square"></i><span class="picker-title">${escapeHtml(session.display_title)}</span><span class="picker-date">${formatDate(session.started_at)}</span>`;
+      item.innerHTML = `<i data-lucide="message-square"></i><span class="picker-title">${escapeHtml(title)}</span><span class="picker-date">${formatDate(session.started_at)}</span>`;
       item.addEventListener("click", () => { closeAll(); onSelect(session, workspacePath); });
       list.appendChild(item);
     }
