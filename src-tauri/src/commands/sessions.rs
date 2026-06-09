@@ -666,33 +666,26 @@ fn delete_codex_session(session_id: &str) -> Result<(), String> {
             .map_err(|e| format!("Codex session not found for id {}: {}", session_id, e))?;
         let now = Utc::now();
 
-        // Build UPDATE dynamically: archived_at / updated_at_ms may not exist
-        // in older Codex schemas.
-        let set_archived_at = if cols.contains("archived_at") {
-            "archived_at = ?1, "
-        } else {
-            ""
-        };
-        let set_updated_at_ms = if cols.contains("updated_at_ms") {
-            "updated_at_ms = ?3, "
-        } else {
-            ""
-        };
-        let sql = format!(
-            "update threads set archived = 1, {}updated_at = ?2, {}where id = ?4 and archived = 0",
-            set_archived_at, set_updated_at_ms
-        );
-
-        let changed = if cols.contains("updated_at_ms") {
-            tx.execute(&sql, params![now.timestamp(), now.timestamp(), now.timestamp_millis(), session_id])
+        let changed = if cols.contains("archived_at") && cols.contains("updated_at_ms") {
+            tx.execute(
+                "update threads set archived = 1, archived_at = ?1, updated_at = ?2, updated_at_ms = ?3 where id = ?4 and archived = 0",
+                params![now.timestamp(), now.timestamp(), now.timestamp_millis(), session_id],
+            )
         } else if cols.contains("archived_at") {
-            tx.execute(&sql, params![now.timestamp(), now.timestamp(), session_id])
+            tx.execute(
+                "update threads set archived = 1, archived_at = ?1, updated_at = ?2 where id = ?3 and archived = 0",
+                params![now.timestamp(), now.timestamp(), session_id],
+            )
+        } else if cols.contains("updated_at_ms") {
+            tx.execute(
+                "update threads set archived = 1, updated_at = ?1, updated_at_ms = ?2 where id = ?3 and archived = 0",
+                params![now.timestamp(), now.timestamp_millis(), session_id],
+            )
         } else {
-            // Neither column — remove both placeholders
-            let sql_fallback = format!(
-                "update threads set archived = 1, updated_at = ?1 where id = ?2 and archived = 0"
-            );
-            tx.execute(&sql_fallback, params![now.timestamp(), session_id])
+            tx.execute(
+                "update threads set archived = 1, updated_at = ?1 where id = ?2 and archived = 0",
+                params![now.timestamp(), session_id],
+            )
         }.map_err(|e| format!("Archive Codex session: {}", e))?;
 
         if changed == 0 {
