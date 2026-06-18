@@ -219,6 +219,57 @@ async fn remove_session_if_done(
     }
 }
 
+/// Build the `CommandBuilder` for a PTY child process. Extracted from
+/// `pty_spawn` so the Windows fallback can rebuild the command with a
+/// path-separator-normalized executable path without duplicating the
+/// env/cwd setup.
+#[allow(clippy::too_many_arguments)]
+fn build_pty_command(
+    file: &str,
+    args: &[String],
+    cwd: Option<&str>,
+    env_remove_keys: &[String],
+    term_name: &str,
+    login_env: &BTreeMap<String, String>,
+    env: &BTreeMap<String, String>,
+    path_env: Option<&OsString>,
+) -> CommandBuilder {
+    let mut cmd = CommandBuilder::new(file);
+    cmd.args(args.iter().cloned());
+    if let Some(cwd) = cwd {
+        cmd.cwd(OsString::from(cwd));
+    }
+    for key in env_remove_keys {
+        cmd.env_remove(OsString::from(key));
+    }
+    cmd.env(OsString::from("TERM"), OsString::from(term_name));
+    cmd.env(OsString::from("COLORTERM"), OsString::from("truecolor"));
+    // EXPERIMENTAL (v0.2.11): masquerade as VS Code so Claude Code's TUI keeps
+    // the cursor in the input box (IME-placement rationale in git history).
+    // Applied before login_env so it always wins.
+    cmd.env(OsString::from("TERM_PROGRAM"), OsString::from("vscode"));
+    // Inject login-shell environment (e.g. API keys from .zshrc/.zprofile) so
+    // GUI-launched Shelf can access user-defined variables. Applied after
+    // Shelf's own TERM/COLORTERM/TERM_PROGRAM so those win, before frontend
+    // env overrides below.
+    for (k, v) in login_env.iter() {
+        if env_remove_keys.iter().any(|key| key == k) {
+            continue;
+        }
+        cmd.env(OsString::from(k), OsString::from(v));
+    }
+    for (k, v) in env.iter() {
+        if is_path_env_key(k) {
+            continue;
+        }
+        cmd.env(OsString::from(k), OsString::from(v));
+    }
+    if let Some(path) = path_env {
+        cmd.env(OsString::from("PATH"), path.clone());
+    }
+    cmd
+}
+
 #[tauri::command]
 pub async fn pty_spawn<R: Runtime>(
     file: String,
@@ -263,45 +314,61 @@ pub async fn pty_spawn<R: Runtime>(
         pty_spawn_path(&file, &env)
     };
 
-    let mut cmd = CommandBuilder::new(file);
-    cmd.args(args);
-    if let Some(cwd) = cwd {
-        cmd.cwd(OsString::from(cwd));
-    }
-    for key in &env_remove_keys {
-        cmd.env_remove(OsString::from(key));
-    }
-    cmd.env(OsString::from("TERM"), OsString::from(term_name));
-    cmd.env(OsString::from("COLORTERM"), OsString::from("truecolor"));
-    // EXPERIMENTAL (v0.2.11): masquerade as VS Code. Hypothesis: Claude Code's
-    // TUI inspects TERM_PROGRAM to decide cursor-management strategy. With
-    // TERM_PROGRAM=Shelf (unknown to it) it parks the real cursor at the
-    // bottom bar after each redraw, so xterm renders the IME composition view
-    // there instead of at the visible input box. If "vscode" makes Claude
-    // Code keep the cursor in the input box, the IME placement bug goes away.
-    // Revisit (or properly inherit a real terminal identifier) in v0.2.12.
-    cmd.env(OsString::from("TERM_PROGRAM"), OsString::from("vscode"));
-    // Inject login-shell environment (e.g. API keys from .zshrc/.zprofile)
-    // so that GUI-launched Shelf can still access user-defined variables.
-    // This is applied after Shelf's own TERM/COLORTERM/TERM_PROGRAM so
-    // those always win, and before the frontend env overrides below.
     let login_env = login_shell_env();
-    for (k, v) in login_env.iter() {
-        if env_remove_keys.iter().any(|key| key == k) {
-            continue;
+    let cmd = build_pty_command(
+        &file,
+        &args,
+        cwd.as_deref(),
+        &env_remove_keys,
+        &term_name,
+        login_env,
+        &env,
+        path_env.as_ref(),
+    );
+    let child = match pair.slave.spawn_command(cmd) {
+        Ok(child) => child,
+        Err(first_err) => {
+            // Windows fallback: CreateProcessW's lpApplicationName can reject
+            // paths that mix `\` and `/` (e.g. `C:\Users\X\.local/bin/claude.exe`
+            // from cli_candidates' hardcoded `/` segments) with
+            // ERROR_INVALID_PARAMETER (87). Retry once with separators
+            // normalized to `\`. On success the user never sees an error; on
+            // failure we surface the original error so the existing frontend
+            // login-shell fallback still applies. `cfg!` keeps the branch
+            // type-checked on all platforms but it only runs on Windows.
+            if cfg!(target_os = "windows") {
+                let normalized: String = file.replace('/', "\\");
+                if normalized != file {
+                    log::info!(
+                        "[pty_spawn] spawn failed ({}); retrying with normalized path `{}`",
+                        first_err, normalized
+                    );
+                    let cmd2 = build_pty_command(
+                        &normalized,
+                        &args,
+                        cwd.as_deref(),
+                        &env_remove_keys,
+                        &term_name,
+                        login_env,
+                        &env,
+                        path_env.as_ref(),
+                    );
+                    match pair.slave.spawn_command(cmd2) {
+                        Ok(child) => child,
+                        Err(second_err) => {
+                            return Err(format!(
+                                "{first_err} (also failed after normalizing path separators: {second_err})"
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(first_err.to_string());
+                }
+            } else {
+                return Err(first_err.to_string());
+            }
         }
-        cmd.env(OsString::from(k), OsString::from(v));
-    }
-    for (k, v) in env.iter() {
-        if is_path_env_key(k) {
-            continue;
-        }
-        cmd.env(OsString::from(k), OsString::from(v));
-    }
-    if let Some(path) = path_env {
-        cmd.env(OsString::from("PATH"), path);
-    }
-    let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    };
     let child_killer = child.clone_killer();
     let child_pid = child.process_id().unwrap_or(0);
     let master = pair.master;
