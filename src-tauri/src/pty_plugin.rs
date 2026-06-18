@@ -23,6 +23,11 @@ struct PtySession {
     master: Mutex<Box<dyn MasterPty + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
     child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    /// OS process id of the spawned child (NOT the session map key).
+    /// On Unix, portable_pty runs `setsid()` in pre_exec, so this PID is
+    /// also the process-group id / session id — killing `-child_pid` reaps
+    /// the whole descendant tree (e.g. Claude Code's MCP grandchildren).
+    child_pid: u32,
     writer: Mutex<Box<dyn std::io::Write + Send>>,
     reader: Mutex<Box<dyn std::io::Read + Send>>,
     reader_closed: AtomicBool,
@@ -298,6 +303,7 @@ pub async fn pty_spawn<R: Runtime>(
     }
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     let child_killer = child.clone_killer();
+    let child_pid = child.process_id().unwrap_or(0);
     let master = pair.master;
     drop(pair.slave);
     let handler = state.session_id.fetch_add(1, Ordering::Relaxed);
@@ -310,6 +316,7 @@ pub async fn pty_spawn<R: Runtime>(
             child_killer: Mutex::new(child_killer),
             writer: Mutex::new(writer),
             reader: Mutex::new(reader),
+            child_pid,
             reader_closed: AtomicBool::new(false),
             child_exited: AtomicBool::new(false),
         }),
@@ -405,16 +412,41 @@ pub async fn pty_resize(
 
 #[tauri::command]
 pub async fn pty_kill(pid: u32, state: tauri::State<'_, PtyState>) -> Result<(), String> {
+    // `pid` here is the frontend Pty handle (the session map key), NOT the
+    // OS process id. The real OS pid lives on the session.
     let Some(session) = state.sessions.write().await.remove(&pid) else {
         return Ok(());
     };
     tauri::async_runtime::spawn_blocking(move || {
-        session
-            .child_killer
-            .lock()
-            .map_err(|e| e.to_string())?
-            .kill()
-            .map_err(|e| e.to_string())
+        // Kill the *whole process group*. portable_pty's Unix spawn runs
+        // `setsid()` in pre_exec, so the child is a session leader: its PID
+        // == PGID == SID, and every descendant (e.g. Claude Code's
+        // chrome-devtools-mcp grandchildren) shares that group. Killing the
+        // group is what prevents the orphaned MCP children that the old
+        // single-PID SIGHUP (portable_pty's default kill) left behind.
+        #[cfg(unix)]
+        {
+            if session.child_pid != 0 {
+                let pgid = -(session.child_pid as i32);
+                // SIGTERM first so the process can clean up its children
+                // gracefully, then SIGKILL the group as a backstop.
+                unsafe {
+                    let _ = libc::kill(pgid, libc::SIGTERM);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                unsafe {
+                    let _ = libc::kill(pgid, libc::SIGKILL);
+                }
+            }
+        }
+        // Final backstop: kill the direct child via portable_pty too. On
+        // Unix this sends SIGHUP (harmless if the group kill already reaped
+        // it); on Windows there is no process-group concept so this is the
+        // primary path. Also covers the rare case where setsid didn't run.
+        if let Ok(mut killer) = session.child_killer.lock() {
+            let _ = killer.kill();
+        }
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?

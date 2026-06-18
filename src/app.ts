@@ -5,7 +5,7 @@ import { tauriInvoke, refreshIcons } from "./helpers";
 import { Session, TabInfo, SessionProvider, SshTarget, AiSessionMap, AiHistoryMessage, AiGroup, ShellCommandApproval } from "./types";
 import { TabManager } from "./modules/tabs";
 import { WorkspaceManager } from "./modules/workspace";
-import { applyTerminalTheme, scheduleTerminalRefit, setTerminalThemeMode, createTerminalTab, type TerminalThemeMode } from "./modules/terminal";
+import { applyTerminalTheme, scheduleTerminalRefit, setTerminalThemeMode, createTerminalTab, dormantTabPty, type TerminalThemeMode } from "./modules/terminal";
 import { setupFileTreeContextMenu } from "./modules/files";
 import { setupDragDrop, setupPanelResize } from "./modules/dragdrop";
 import { t, setLang, getLang } from "./i18n";
@@ -17,7 +17,7 @@ import { openDialog } from "./modules/dialog";
 import { showToast } from "./modules/toast";
 import { buildSshArgs, shQuote } from "./modules/ssh";
 import { scheduleUpdateCheck } from "./modules/update-check";
-import { APP_THEMES, SESSION_POLL_INTERVAL_MS, START_TAB_ID, THEME_STORAGE_KEY, type AppTheme } from "./modules/app-constants";
+import { APP_THEMES, SESSION_POLL_INTERVAL_MS, START_TAB_ID, THEME_STORAGE_KEY, DORMANT_TIMEOUT_MS, type AppTheme } from "./modules/app-constants";
 import * as settingsPanel from "./modules/settings-panel";
 import * as aiWindow from "./modules/ai-window";
 import * as sessionActions from "./modules/session-actions";
@@ -102,6 +102,9 @@ class App {
       () => this._renderTabs(), () => this._renderWorkspaces(),
       (tab) => this._onActivateTab(tab),
       (tabId, hasUnread) => this._onUnreadChange(tabId, hasUnread),
+      // P1: respawn a dormant session tab's claude/codex PTY when the user
+      // revisits it, so inactive sessions can be killed to reclaim memory.
+      (tab) => sessionActions._respawnDormantTab(this, tab),
     );
     this._clearUnreadState();
 
@@ -405,7 +408,30 @@ class App {
       for (const ws of this.ws.workspaces) {
         this._refreshWorkspaceSessions(ws.path, ws.provider, "passive", ws.ssh).catch(() => {});
       }
+      this._sweepDormantTabs();
     }, SESSION_POLL_INTERVAL_MS);
+  }
+
+  /**
+   * P1: Put inactive session tabs to sleep. A session tab (one bound to a
+   * sessionId) that is not the active tab and has produced no PTY output for
+   * longer than DORMANT_TIMEOUT_MS has its `claude --resume` process killed
+   * (whole process group via P0, so MCP children die too) while the tab and
+   * its sessionId are retained for on-demand respawn. The active tab and
+   * tabs actively producing output (running turns) are never touched.
+   */
+  private _sweepDormantTabs() {
+    const now = Date.now();
+    const activeId = this.tabs.activeId;
+    for (const tab of this.tabs.tabsMap.values()) {
+      if (!tab.pty || tab.ptyExited || tab.dormant) continue;
+      if (!tab.sessionId) continue;
+      if (tab.id === activeId) continue;
+      const last = tab.lastDataAt ?? 0;
+      if (last && now - last > DORMANT_TIMEOUT_MS) {
+        dormantTabPty(tab);
+      }
+    }
   }
 
   private async _refreshWorkspaceSessions(

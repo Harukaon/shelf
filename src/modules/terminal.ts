@@ -452,12 +452,142 @@ async function pasteClipboardText(terminal: Terminal) {
   }
 }
 
+/**
+ * P1: Spawn (or respawn) the PTY for a tab and wire its data/exit events.
+ * Extracted from createTerminalTab so a dormant tab can be respawned in
+ * place (respawnTabPty) without recreating the xterm Terminal. Mirrors the
+ * original inline spawn + fallback-shell logic, with two additions: it
+ * writes to the TabInfo passed in (instead of the createTerminalTab-local
+ * `tabInfo`), and refreshes `tab.lastDataAt` on every PTY data event so the
+ * dormant scanner can distinguish idle sessions from ones actively
+ * producing output (e.g. a running agent turn).
+ */
+function spawnPtyForTab(
+  tab: TabInfo,
+  options: TerminalTabOptions | undefined,
+  terminal: Terminal,
+  onPtyWrite: (tabId: string, data: string) => void,
+): void {
+  let fallbackUsed = false;
+  const spawnStartedAt = Date.now();
+  let earlyOutput = "";
+  const decoder = new TextDecoder();
+  const commandFallback = options?.command
+    ? spawnCommandPty(options.command, options, terminal)
+    : undefined;
+  let pty: IPty | undefined = commandFallback
+    ? commandFallback.pty
+    : spawnShellPty(options?.shell || "zsh", options, terminal);
+
+  const ptyInit: Promise<number> = (pty as any)._init as Promise<number>;
+  const logCommand = options?.command
+    ? `${options.command.bin} ${options.command.args.join(" ")}`
+    : options?.shell || "zsh";
+  console.log(`[Terminal] tab ${tab.id} spawning ${logCommand} cwd=${options?.cwd}`);
+  ptyInit
+    .then((pid: number) => {
+      console.log(`[Terminal] tab ${tab.id} pid=${pid} ok`);
+    })
+    .catch((e: unknown) => {
+      if (commandFallback?.fallbackShell && commandFallback.fallbackLine && !fallbackUsed) {
+        fallbackUsed = true;
+        console.warn(`[Terminal] tab ${tab.id} direct command spawn failed, falling back to shell:`, e);
+        terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
+        terminal.writeln("Falling back to login shell.");
+        pty = spawnShellPty(commandFallback.fallbackShell, options, terminal);
+        tab.pty = pty;
+        bindPty(pty, true);
+        pty.write(`${commandFallback.fallbackLine}\r`);
+        return;
+      }
+      console.error(`[Terminal] tab ${tab.id} spawn FAILED:`, e);
+      tab.ptyExited = true;
+      terminal.clear();
+      terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
+      terminal.writeln("Try closing some tabs or restarting Shelf.");
+    });
+
+  tab.pty = pty;
+  tab.ptyExited = false;
+  tab.dormant = false;
+  tab.lastDataAt = Date.now();
+
+  const bindPty = (boundPty: IPty, fallback: boolean) => {
+    boundPty.onData((data: Uint8Array) => {
+      terminal.write(data);
+      // P1: refresh inactivity timestamp so the dormant scanner won't
+      // sleep a session that is actively producing output.
+      tab.lastDataAt = Date.now();
+      if (!fallback && commandFallback?.fallbackShell && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS) {
+        earlyOutput += decoder.decode(data, { stream: true });
+        if (earlyOutput.length > COMMAND_FALLBACK_MAX_OUTPUT) {
+          earlyOutput = earlyOutput.slice(-COMMAND_FALLBACK_MAX_OUTPUT);
+        }
+      }
+    });
+    boundPty.onExit((exit) => {
+      if (!fallback && commandFallback?.fallbackShell && commandFallback.fallbackLine && !fallbackUsed && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS && shouldFallbackCommand(earlyOutput, exit.exitCode)) {
+        fallbackUsed = true;
+        console.warn(`[Terminal] tab ${tab.id} command exited early with environment error, falling back to shell.`);
+        terminal.write("\r\nFalling back to login shell.\r\n");
+        pty = spawnShellPty(commandFallback.fallbackShell, options, terminal);
+        tab.pty = pty;
+        bindPty(pty, true);
+        pty.write(`${commandFallback.fallbackLine}\r`);
+        return;
+      }
+      tab.ptyExited = true;
+      console.log(`[Terminal] pty exited tab ${tab.id} pid=${boundPty.pid} code=`, exit.exitCode, "signal:", exit.signal);
+      terminal.write(`\r\n${t("process.exited")}\r\n`);
+    });
+  };
+
+  bindPty(pty, false);
+}
+
+/**
+ * P1: Put a tab's session to sleep — kill its PTY (the whole process group
+ * via P0's pty_kill, so MCP grandchildren die too) but keep the tab and its
+ * sessionId so it can be respawned on demand. Used by the dormant scanner
+ * for inactive session tabs.
+ */
+export function dormantTabPty(tab: TabInfo): void {
+  if (!tab.pty) return;
+  try { tab.pty.kill(); } catch (_) { /* ignore */ }
+  tab.pty = undefined;
+  tab.dormant = true;
+  tab.ptyExited = false;
+  if (tab.terminal) {
+    try {
+      tab.terminal.write(`\r\n\x1b[2m— session suspended to free memory; switch to this tab to resume —\x1b[0m\r\n`);
+    } catch (_) { /* ignore */ }
+  }
+}
+
+/**
+ * P1: Respawn a dormant tab's PTY in place, reusing the existing xterm
+ * Terminal. `options` must carry the command to run (e.g.
+ * `{ command: { bin: claudePath, args: ["--resume", sessionId] } }`).
+ */
+export function respawnTabPty(
+  tab: TabInfo,
+  options: TerminalTabOptions | undefined,
+  onPtyWrite: (tabId: string, data: string) => void,
+): void {
+  if (!tab.terminal) return;
+  if (tab.pty) { try { tab.pty.kill(); } catch (_) { /* ignore */ } tab.pty = undefined; }
+  tab.ptyExited = false;
+  try { tab.terminal.clear(); } catch (_) { /* ignore */ }
+  spawnPtyForTab(tab, options, tab.terminal, onPtyWrite);
+}
+
 export function createTerminalTab(
   tabId: string,
   title: string,
   terminalContainer: HTMLElement,
   onPtyWrite: (tabId: string, data: string) => void,
   options?: TerminalTabOptions,
+  deferSpawn = false,
 ): TabInfo {
   const fontOptions = terminalFontOptions();
   const terminal = new Terminal({
@@ -532,105 +662,38 @@ export function createTerminalTab(
     return false;
   });
 
-  let pty: IPty | undefined;
-  let fallbackUsed = false;
-  const spawnStartedAt = Date.now();
-  let earlyOutput = "";
-  const decoder = new TextDecoder();
-  try {
-    const commandFallback = options?.command
-      ? spawnCommandPty(options.command, options, terminal)
-      : undefined;
-    pty = commandFallback
-      ? commandFallback.pty
-      : spawnShellPty(options?.shell || "zsh", options, terminal);
-
-    const ptyInit: Promise<number> = (pty as any)._init as Promise<number>;
-    const logCommand = options?.command
-      ? `${options.command.bin} ${options.command.args.join(" ")}`
-      : options?.shell || "zsh";
-    console.log(`[Terminal] tab ${tabId} spawning ${logCommand} cwd=${options?.cwd}`);
-    ptyInit
-      .then((pid: number) => {
-        console.log(`[Terminal] tab ${tabId} pid=${pid} ok`);
-      })
-      .catch((e: unknown) => {
-        if (commandFallback?.fallbackShell && commandFallback.fallbackLine && !fallbackUsed) {
-          fallbackUsed = true;
-          console.warn(`[Terminal] tab ${tabId} direct command spawn failed, falling back to shell:`, e);
-          terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
-          terminal.writeln("Falling back to login shell.");
-          pty = spawnShellPty(commandFallback.fallbackShell, options, terminal);
-          tabInfo.pty = pty;
-          bindPty(pty, true);
-          pty.write(`${commandFallback.fallbackLine}\r`);
-          return;
-        }
-        console.error(`[Terminal] tab ${tabId} spawn FAILED:`, e);
-        tabInfo.ptyExited = true;
-        terminal.clear();
-        terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
-        terminal.writeln("Try closing some tabs or restarting Shelf.");
-      });
-
-    tabInfo.pty = pty;
-
-    const bindPty = (boundPty: IPty, fallback: boolean) => {
-      boundPty.onData((data: Uint8Array) => {
-        terminal.write(data);
-        if (!fallback && commandFallback?.fallbackShell && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS) {
-          earlyOutput += decoder.decode(data, { stream: true });
-          if (earlyOutput.length > COMMAND_FALLBACK_MAX_OUTPUT) {
-            earlyOutput = earlyOutput.slice(-COMMAND_FALLBACK_MAX_OUTPUT);
-          }
-        }
-      });
-      boundPty.onExit((exit) => {
-        if (!fallback && commandFallback?.fallbackShell && commandFallback.fallbackLine && !fallbackUsed && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS && shouldFallbackCommand(earlyOutput, exit.exitCode)) {
-          fallbackUsed = true;
-          console.warn(`[Terminal] tab ${tabId} command exited early with environment error, falling back to shell.`);
-          terminal.write("\r\nFalling back to login shell.\r\n");
-          pty = spawnShellPty(commandFallback.fallbackShell, options, terminal);
-          tabInfo.pty = pty;
-          bindPty(pty, true);
-          pty.write(`${commandFallback.fallbackLine}\r`);
-          return;
-        }
-        tabInfo.ptyExited = true;
-        console.log(`[Terminal] pty exited tab ${tabId} pid=${boundPty.pid} code=`, exit.exitCode, "signal:", exit.signal);
-        terminal.write(`\r\n${t("process.exited")}\r\n`);
-      });
-    };
-
-    bindPty(pty, false);
-    const isMac = navigator.platform.toLowerCase().includes("mac");
-    terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-      if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
-        onPtyWrite(tabId, "\x1b[13;2u");
-        event.preventDefault();
-        return false;
-      }
-      if (
-        !isMac &&
-        event.type === "keydown" &&
-        event.ctrlKey && !event.metaKey && !event.altKey &&
-        (event.code === "KeyV" || event.key === "v" || event.key === "V")
-      ) {
-        void pasteClipboardText(terminal);
-        event.preventDefault();
-        return false;
-      }
-      return true;
-    });
-    terminal.onData((data: string) => {
-      onPtyWrite(tabId, data);
-    });
-  } catch (e) {
-    tabInfo.ptyExited = true;
-    console.error("Spawn PTY:", e);
-    terminal.writeln(`\r\n${t("shell.failed", String(e))}`);
-    terminal.writeln("Try closing some tabs or restarting Shelf.");
+  // P1: deferSpawn=true creates the terminal/tab shell without spawning a
+  // PTY (tab starts dormant). Used by app-state restore so startup doesn't
+  // immediately spawn every saved historical session; the PTY is respawned
+  // on demand when the user activates the tab (see tabs.ts activateTab).
+  if (deferSpawn) {
+    tabInfo.dormant = true;
+  } else {
+    spawnPtyForTab(tabInfo, options, terminal, onPtyWrite);
   }
+
+  const isMac = navigator.platform.toLowerCase().includes("mac");
+  terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+    if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
+      onPtyWrite(tabId, "\x1b[13;2u");
+      event.preventDefault();
+      return false;
+    }
+    if (
+      !isMac &&
+      event.type === "keydown" &&
+      event.ctrlKey && !event.metaKey && !event.altKey &&
+      (event.code === "KeyV" || event.key === "v" || event.key === "V")
+    ) {
+      void pasteClipboardText(terminal);
+      event.preventDefault();
+      return false;
+    }
+    return true;
+  });
+  terminal.onData((data: string) => {
+    onPtyWrite(tabId, data);
+  });
 
   tabInfo.resizeObserver = new ResizeObserver(() => {
     scheduleTerminalRefit(tabInfo);

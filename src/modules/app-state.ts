@@ -220,6 +220,9 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       const tab = createTerminalTab(saved.id, app._displayTitleForSession(session) || saved.title, app.terminalContainer,
         (id, data) => app._writePty(id, data),
         { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command: { bin: "ssh", args: sshArgs }, ssh: saved.ssh, ...unreadOptions },
+        // P2: defer spawn — restore builds the dormant tab shell only; the
+        // claude --resume PTY is respawned when the user activates this tab.
+        true,
       );
       app._beginRestoredTabUnreadSuppression(tab.id);
       return tab;
@@ -227,6 +230,9 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
     const tab = createTerminalTab(saved.id, app._displayTitleForSession(session) || saved.title, app.terminalContainer,
       (id, data) => app._writePty(id, data),
       { sessionId: session.id, sessionProvider: session.provider, cwd, workspacePath: saved.workspacePath, command, ...unreadOptions },
+      // P2: defer spawn — restore builds the dormant tab shell only; the
+      // claude --resume PTY is respawned when the user activates this tab.
+      true,
     );
     app._beginRestoredTabUnreadSuppression(tab.id);
     return tab;

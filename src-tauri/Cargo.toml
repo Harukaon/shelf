@@ -1,6 +1,6 @@
 [package]
 name = "shelf"
-version = "0.2.21"
+version = "0.2.22"
 edition = "2021"
 
 [lib]
@@ -24,6 +24,7 @@ uuid = { version = "1", features = ["v4"] }
 trash = "5"
 dirs = "5"
 portable-pty = "0.8"
+libc = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 rig-core = "0.37"
 thiserror = "2"
