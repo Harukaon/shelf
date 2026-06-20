@@ -12,7 +12,6 @@ export class TabManager {
     private renderWorkspaces: () => void,
     private onActivateTab?: (tab: TabInfo) => void,
     private onUnreadChange?: (tabId: string, hasUnread: boolean) => void,
-    private onRespawnDormantTab?: (tab: TabInfo) => void,
   ) {}
 
   get tabsMap() {
@@ -40,11 +39,6 @@ export class TabManager {
     });
     const tab = this.tabs.get(tabId);
     if (tab) {
-      // P1: if this session tab was put to sleep (dormant) to free memory,
-      // respawn its `claude --resume` PTY on demand now, before revealing it.
-      if (tab.dormant && tab.sessionId && this.onRespawnDormantTab) {
-        this.onRespawnDormantTab(tab);
-      }
       tab.containerEl.style.visibility = "visible";
       tab.containerEl.style.pointerEvents = "auto";
       tab.active = true;

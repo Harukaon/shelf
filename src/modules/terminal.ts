@@ -453,14 +453,10 @@ async function pasteClipboardText(terminal: Terminal) {
 }
 
 /**
- * P1: Spawn (or respawn) the PTY for a tab and wire its data/exit events.
- * Extracted from createTerminalTab so a dormant tab can be respawned in
- * place (respawnTabPty) without recreating the xterm Terminal. Mirrors the
- * original inline spawn + fallback-shell logic, with two additions: it
- * writes to the TabInfo passed in (instead of the createTerminalTab-local
- * `tabInfo`), and refreshes `tab.lastDataAt` on every PTY data event so the
- * dormant scanner can distinguish idle sessions from ones actively
- * producing output (e.g. a running agent turn).
+ * Spawn the PTY for a tab and wire its data/exit events. Extracted from
+ * createTerminalTab so the spawn + login-shell fallback logic lives in one
+ * place. Operates on the TabInfo passed in rather than a closure-local
+ * `tabInfo`.
  */
 function spawnPtyForTab(
   tab: TabInfo,
@@ -509,15 +505,10 @@ function spawnPtyForTab(
 
   tab.pty = pty;
   tab.ptyExited = false;
-  tab.dormant = false;
-  tab.lastDataAt = Date.now();
 
   const bindPty = (boundPty: IPty, fallback: boolean) => {
     boundPty.onData((data: Uint8Array) => {
       terminal.write(data);
-      // P1: refresh inactivity timestamp so the dormant scanner won't
-      // sleep a session that is actively producing output.
-      tab.lastDataAt = Date.now();
       if (!fallback && commandFallback?.fallbackShell && Date.now() - spawnStartedAt <= COMMAND_FALLBACK_WINDOW_MS) {
         earlyOutput += decoder.decode(data, { stream: true });
         if (earlyOutput.length > COMMAND_FALLBACK_MAX_OUTPUT) {
@@ -545,49 +536,12 @@ function spawnPtyForTab(
   bindPty(pty, false);
 }
 
-/**
- * P1: Put a tab's session to sleep — kill its PTY (the whole process group
- * via P0's pty_kill, so MCP grandchildren die too) but keep the tab and its
- * sessionId so it can be respawned on demand. Used by the dormant scanner
- * for inactive session tabs.
- */
-export function dormantTabPty(tab: TabInfo): void {
-  if (!tab.pty) return;
-  try { tab.pty.kill(); } catch (_) { /* ignore */ }
-  tab.pty = undefined;
-  tab.dormant = true;
-  tab.ptyExited = false;
-  if (tab.terminal) {
-    try {
-      tab.terminal.write(`\r\n\x1b[2m— session suspended to free memory; switch to this tab to resume —\x1b[0m\r\n`);
-    } catch (_) { /* ignore */ }
-  }
-}
-
-/**
- * P1: Respawn a dormant tab's PTY in place, reusing the existing xterm
- * Terminal. `options` must carry the command to run (e.g.
- * `{ command: { bin: claudePath, args: ["--resume", sessionId] } }`).
- */
-export function respawnTabPty(
-  tab: TabInfo,
-  options: TerminalTabOptions | undefined,
-  onPtyWrite: (tabId: string, data: string) => void,
-): void {
-  if (!tab.terminal) return;
-  if (tab.pty) { try { tab.pty.kill(); } catch (_) { /* ignore */ } tab.pty = undefined; }
-  tab.ptyExited = false;
-  try { tab.terminal.clear(); } catch (_) { /* ignore */ }
-  spawnPtyForTab(tab, options, tab.terminal, onPtyWrite);
-}
-
 export function createTerminalTab(
   tabId: string,
   title: string,
   terminalContainer: HTMLElement,
   onPtyWrite: (tabId: string, data: string) => void,
   options?: TerminalTabOptions,
-  deferSpawn = false,
 ): TabInfo {
   const fontOptions = terminalFontOptions();
   const terminal = new Terminal({
@@ -662,15 +616,7 @@ export function createTerminalTab(
     return false;
   });
 
-  // P1: deferSpawn=true creates the terminal/tab shell without spawning a
-  // PTY (tab starts dormant). Used by app-state restore so startup doesn't
-  // immediately spawn every saved historical session; the PTY is respawned
-  // on demand when the user activates the tab (see tabs.ts activateTab).
-  if (deferSpawn) {
-    tabInfo.dormant = true;
-  } else {
-    spawnPtyForTab(tabInfo, options, terminal, onPtyWrite);
-  }
+  spawnPtyForTab(tabInfo, options, terminal, onPtyWrite);
 
   const isMac = navigator.platform.toLowerCase().includes("mac");
   terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {

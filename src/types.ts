@@ -52,12 +52,6 @@ export interface TabInfo {
   fitAddon: import("@xterm/addon-fit").FitAddon;
   pty?: import("./modules/pty").IPty;
   ptyExited?: boolean;
-  // P1: dormant = the session's PTY process has been killed to reclaim
-  // memory, but the tab (and its sessionId) are retained so `claude --resume`
-  // can respawn it when the user revisits the tab. lastDataAt tracks the
-  // last PTY output timestamp for the inactivity check.
-  dormant?: boolean;
-  lastDataAt?: number;
   hasUnreadOutput?: boolean;
   containerEl: HTMLDivElement;
   active: boolean;

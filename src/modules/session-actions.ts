@@ -2,7 +2,7 @@ import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import { refreshIcons, tauriInvoke } from "../helpers";
 import { t } from "../i18n";
 import { clearFileCache, renderFileTree } from "./files";
-import { createTerminalTab, respawnTabPty, writeToPty } from "./terminal";
+import { createTerminalTab, writeToPty } from "./terminal";
 import { showTerminalMenu } from "./pickers";
 import { openDialog, confirmDialog } from "./dialog";
 import { showToast } from "./toast";
@@ -450,44 +450,4 @@ export function _refreshCurrentFileTree(app: any) {
   if (!path) return;
   clearFileCache();
   app._loadFileTree(path);
-}
-
-/**
- * P1: Respawn a dormant session tab's PTY on demand (when the user revisits
- * the tab). Reconstructs the same `claude --resume <id>` / codex / SSH
- * command that originally opened it, mirroring _openSessionTab.
- */
-export function _respawnDormantTab(app: any, tab: TabInfo) {
-  if (!tab.sessionId || !tab.sessionProvider || !tab.terminal) return;
-  const wsPath = tab.workspacePath || "";
-  const cwd = tab.cwd || wsPath;
-  const ws = (app.ws.workspaces as WorkspaceItem[]).find(
-    (w: WorkspaceItem) => w.path === wsPath && w.provider === tab.sessionProvider,
-  );
-  const ssh = (tab as any).ssh || ws?.ssh;
-  let command: { bin: string; args: string[] };
-  if (ssh) {
-    const remoteCmd = tab.sessionProvider === "codex"
-      ? `codex resume ${shQuote(tab.sessionId)} -C ${shQuote(cwd)}`
-      : `claude --resume ${shQuote(tab.sessionId)}`;
-    const sshArgs = buildSshArgs(ssh, remoteCmd);
-    command = { bin: "ssh", args: sshArgs };
-  } else {
-    command = tab.sessionProvider === "codex"
-      ? { bin: app.codexPath, args: ["resume", tab.sessionId, "-C", cwd] }
-      : { bin: app.claudePath, args: ["--resume", tab.sessionId] };
-  }
-  respawnTabPty(
-    tab,
-    {
-      sessionId: tab.sessionId,
-      sessionProvider: tab.sessionProvider,
-      cwd,
-      workspacePath: wsPath,
-      command,
-      ssh,
-      onUnreadChange: (id: string, v: boolean) => app._onUnreadChange(id, v),
-    },
-    (id: string, data: string) => app._writePty(id, data),
-  );
 }
