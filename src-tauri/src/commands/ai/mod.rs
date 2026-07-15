@@ -56,6 +56,7 @@ pub use types::{
 type AiResult<T> = Result<T, String>;
 const AI_STREAM_EVENT: &str = "shelf://ai-stream";
 const AI_MAX_TOOL_TURNS: usize = 30;
+const AI_MAX_COMPLETION_TOKENS: u64 = 4_096;
 const AI_MAX_TOOL_RESULT_CHARS: usize = 24_000;
 const AI_MAX_READ_FILE_LINES: usize = 400;
 const SHELL_TOOL_NAME: &str = "run_shell_command";

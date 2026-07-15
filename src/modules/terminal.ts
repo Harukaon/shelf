@@ -452,6 +452,23 @@ async function pasteClipboardText(terminal: Terminal) {
   }
 }
 
+function copyTerminalSelection(terminal: Terminal) {
+  const text = terminal.getSelection();
+  if (!text) return;
+
+  // Dispatch a synchronous copy event while the keyboard gesture is active;
+  // xterm's built-in handler writes its logical selection to clipboardData.
+  try {
+    if (document.execCommand("copy")) return;
+  } catch (_) {
+    // Fall back to the async clipboard API below.
+  }
+
+  void navigator.clipboard.writeText(text).catch((error) => {
+    console.error("[Terminal] clipboard copy failed:", error);
+  });
+}
+
 /**
  * Spawn the PTY for a tab and wire its data/exit events. Extracted from
  * createTerminalTab so the spawn + login-shell fallback logic lives in one
@@ -620,6 +637,18 @@ export function createTerminalTab(
 
   const isMac = navigator.platform.toLowerCase().includes("mac");
   terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+    const copyModifier = isMac ? event.metaKey : event.ctrlKey;
+    if (
+      event.type === "keydown" &&
+      copyModifier && !event.altKey &&
+      (event.code === "KeyC" || event.key === "c" || event.key === "C") &&
+      terminal.hasSelection()
+    ) {
+      copyTerminalSelection(terminal);
+      event.preventDefault();
+      event.stopPropagation();
+      return false;
+    }
     if (event.type === "keydown" && event.key === "Enter" && event.shiftKey) {
       onPtyWrite(tabId, "\x1b[13;2u");
       event.preventDefault();
