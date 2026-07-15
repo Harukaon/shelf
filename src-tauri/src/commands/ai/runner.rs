@@ -165,6 +165,9 @@ async fn run_ai_organizer_claude(
 
     let agent = client
         .agent(settings.model.trim())
+        // Anthropic requires max_tokens on every completion request. Rig leaves
+        // it unset by default, which made the organizer fail before streaming.
+        .max_tokens(AI_MAX_COMPLETION_TOKENS)
         .agent_with_shelf_tools()
         .build();
 
