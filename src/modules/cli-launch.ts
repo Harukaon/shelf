@@ -83,6 +83,11 @@ export function formatCliArgs(args: string[]): string {
   return args.map(formatCliArg).join(" ");
 }
 
+/** Human-readable shell-style representation of the argv passed to the PTY. */
+export function formatCliCommand(command: CliCommand): string {
+  return formatCliArgs([command.bin, ...command.args]);
+}
+
 export function buildCliArgs(
   provider: SessionProvider,
   extraArgs: string[],
