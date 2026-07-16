@@ -6,7 +6,8 @@ import { createTerminalTab, writeToPty } from "./terminal";
 import { showTerminalMenu } from "./pickers";
 import { openDialog, confirmDialog } from "./dialog";
 import { showToast } from "./toast";
-import { buildSshArgs, shQuote } from "./ssh";
+import { buildSshArgs } from "./ssh";
+import { buildLocalCliCommand, buildRemoteCliCommand } from "./cli-launch";
 import {
   PENDING_SESSION_DISCOVERY_TIMEOUT_MS,
   PENDING_SESSION_POLL_INTERVAL_MS,
@@ -131,9 +132,10 @@ export async function _togglePin(app: any, session: Session) {
 export async function _newClaudeSession(app: any, wsPath: string) {
   const tabId = crypto.randomUUID();
   const baselineIds = await app._sessionBaselineIds(wsPath, "claude");
+  const command = buildLocalCliCommand("claude", app.claudePath, app.claudeArgs, wsPath);
   const tab = createTerminalTab(tabId, t("tab.claude_new"), app.terminalContainer,
     (id, data) => app._writePty(id, data),
-    { cwd: wsPath, workspacePath: wsPath, sessionProvider: "claude", command: { bin: app.claudePath, args: [] }, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
+    { cwd: wsPath, workspacePath: wsPath, sessionProvider: "claude", command, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
   );
   app.tabs.addTab(tab);
   app.pendingSessionTabs.set(tabId, {
@@ -149,9 +151,10 @@ export async function _newClaudeSession(app: any, wsPath: string) {
 export async function _newCodexSession(app: any, wsPath: string) {
   const tabId = crypto.randomUUID();
   const baselineIds = await app._sessionBaselineIds(wsPath, "codex");
+  const command = buildLocalCliCommand("codex", app.codexPath, app.codexArgs, wsPath);
   const tab = createTerminalTab(tabId, t("tab.codex_new"), app.terminalContainer,
     (id, data) => app._writePty(id, data),
-    { cwd: wsPath, workspacePath: wsPath, sessionProvider: "codex", command: { bin: app.codexPath, args: ["-C", wsPath] }, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
+    { cwd: wsPath, workspacePath: wsPath, sessionProvider: "codex", command, onUnreadChange: (id, v) => app._onUnreadChange(id, v) },
   );
   app.tabs.addTab(tab);
   app.pendingSessionTabs.set(tabId, {
@@ -337,15 +340,13 @@ export function _openSessionTab(app: any, session: Session, wsPath: string) {
   const cwd = session.cwd || wsPath;
   // Find the workspace to check if it's SSH
   const ws = app.ws.workspaces.find((w: any) => w.path === wsPath);
-  const command = session.provider === "codex"
-    ? { bin: app.codexPath, args: ["resume", session.id, "-C", cwd] }
-    : { bin: app.claudePath, args: ["--resume", session.id] };
+  const extraArgs = session.provider === "codex" ? app.codexArgs : app.claudeArgs;
+  const bin = session.provider === "codex" ? app.codexPath : app.claudePath;
+  const command = buildLocalCliCommand(session.provider, bin, extraArgs, cwd, session.id);
 
   // If workspace is SSH, spawn via SSH
   if (ws?.ssh) {
-    const remoteCmd = session.provider === "codex"
-      ? `codex resume ${shQuote(session.id)} -C ${shQuote(cwd)}`
-      : `claude --resume ${shQuote(session.id)}`;
+    const remoteCmd = buildRemoteCliCommand(session.provider, extraArgs, cwd, session.id);
     const sshArgs = buildSshArgs(ws.ssh, remoteCmd);
     const tab = createTerminalTab(tabId, app._displayTitleForSession(session), app.terminalContainer,
       (id, data) => app._writePty(id, data),

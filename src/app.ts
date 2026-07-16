@@ -15,7 +15,8 @@ import Sortable from "sortablejs";
 import { showContextMenu } from "./modules/context-menu";
 import { openDialog } from "./modules/dialog";
 import { showToast } from "./modules/toast";
-import { buildSshArgs, shQuote } from "./modules/ssh";
+import { buildSshArgs } from "./modules/ssh";
+import { buildRemoteCliCommand } from "./modules/cli-launch";
 import { scheduleUpdateCheck } from "./modules/update-check";
 import { APP_THEMES, SESSION_POLL_INTERVAL_MS, START_TAB_ID, THEME_STORAGE_KEY, type AppTheme } from "./modules/app-constants";
 import * as settingsPanel from "./modules/settings-panel";
@@ -47,6 +48,8 @@ class App {
   theme: AppTheme = "dark";
   claudePath = "claude";
   codexPath = "codex";
+  claudeArgs: string[] = [];
+  codexArgs: string[] = [];
   pinnedIds = new Set<string>();
   sessionTitleOverrides = new Map<string, string>();
   pendingSessionTabs = new Map<string, PendingSessionTab>();
@@ -269,6 +272,14 @@ class App {
       if (s?.shell) this.shellSetting = s.shell;
       if (s?.language) { setLang(s.language); }
       if (s?.pinned) { this.pinnedIds = new Set(s.pinned); }
+      const claudeArgs = s?.claudeArgs || s?.claude_args;
+      const codexArgs = s?.codexArgs || s?.codex_args;
+      if (Array.isArray(claudeArgs)) {
+        this.claudeArgs = claudeArgs.filter((arg: unknown): arg is string => typeof arg === "string");
+      }
+      if (Array.isArray(codexArgs)) {
+        this.codexArgs = codexArgs.filter((arg: unknown): arg is string => typeof arg === "string");
+      }
       if (s?.session_titles || s?.sessionTitles) {
         const titles = s.session_titles || s.sessionTitles;
         this.sessionTitleOverrides = new Map(
@@ -745,7 +756,7 @@ class App {
   private _newSshClaudeSession(ws: import("./types").WorkspaceItem) {
     const tabId = crypto.randomUUID();
     const ssh = ws.ssh!;
-    const sshArgs = buildSshArgs(ssh, "claude");
+    const sshArgs = buildSshArgs(ssh, buildRemoteCliCommand("claude", this.claudeArgs, ws.path));
     const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
       { cwd: ws.path, workspacePath: ws.path, sessionProvider: "claude", command: { bin: "ssh", args: sshArgs }, ssh, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },
@@ -758,7 +769,7 @@ class App {
   private _newSshCodexSession(ws: import("./types").WorkspaceItem) {
     const tabId = crypto.randomUUID();
     const ssh = ws.ssh!;
-    const sshArgs = buildSshArgs(ssh, `codex -C ${shQuote(ws.path)}`);
+    const sshArgs = buildSshArgs(ssh, buildRemoteCliCommand("codex", this.codexArgs, ws.path));
     const tab = createTerminalTab(tabId, t("tab.codex_new"), this.terminalContainer,
       (id, data) => this._writePty(id, data),
       { cwd: ws.path, workspacePath: ws.path, sessionProvider: "codex", command: { bin: "ssh", args: sshArgs }, ssh, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },

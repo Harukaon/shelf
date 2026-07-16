@@ -78,6 +78,10 @@ pub struct ShelfConfig {
     pub pinned: Vec<String>,
     #[serde(default)]
     pub session_titles: BTreeMap<String, String>,
+    #[serde(default)]
+    pub claude_args: Vec<String>,
+    #[serde(default)]
+    pub codex_args: Vec<String>,
 }
 
 impl Default for ShelfConfig {
@@ -88,6 +92,8 @@ impl Default for ShelfConfig {
             language: default_lang(),
             pinned: Vec::new(),
             session_titles: BTreeMap::new(),
+            claude_args: Vec::new(),
+            codex_args: Vec::new(),
         }
     }
 }
@@ -112,4 +118,37 @@ pub struct FileEntry {
     pub path: String,
     pub is_dir: bool,
     pub children: Vec<FileEntry>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_config_defaults_cli_args() {
+        let config: ShelfConfig = serde_json::from_str(
+            r#"{"workspaces":[],"shell":"zsh","language":"en","pinned":[],"session_titles":{}}"#,
+        )
+        .expect("legacy config should remain readable");
+
+        assert!(config.claude_args.is_empty());
+        assert!(config.codex_args.is_empty());
+    }
+
+    #[test]
+    fn cli_args_round_trip_as_argv() {
+        let mut config = ShelfConfig::default();
+        config.claude_args = vec![
+            "--dangerously-skip-permissions".to_string(),
+            "--settings".to_string(),
+            "/Users/username/My Settings/claude.json".to_string(),
+        ];
+        config.codex_args = vec!["--profile".to_string(), "work".to_string()];
+
+        let encoded = serde_json::to_string(&config).expect("config should serialize");
+        let decoded: ShelfConfig = serde_json::from_str(&encoded).expect("config should deserialize");
+
+        assert_eq!(decoded.claude_args, config.claude_args);
+        assert_eq!(decoded.codex_args, config.codex_args);
+    }
 }
