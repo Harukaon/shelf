@@ -4478,7 +4478,7 @@ dependencies = [
 
 [[package]]
 name = "shelf"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
