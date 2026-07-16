@@ -140,6 +140,8 @@ pub fn get_settings() -> Result<serde_json::Value, String> {
         "language": config.language,
         "pinned": config.pinned,
         "session_titles": config.session_titles,
+        "claudeArgs": config.claude_args,
+        "codexArgs": config.codex_args,
     }))
 }
 
@@ -156,6 +158,26 @@ pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
     }
     if let Some(lang) = payload.get("language").and_then(|s| s.as_str()) {
         config.language = lang.to_string();
+    }
+    if let Some(args) = payload
+        .get("claudeArgs")
+        .or_else(|| payload.get("claude_args"))
+        .and_then(|value| value.as_array())
+    {
+        config.claude_args = args
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
+    }
+    if let Some(args) = payload
+        .get("codexArgs")
+        .or_else(|| payload.get("codex_args"))
+        .and_then(|value| value.as_array())
+    {
+        config.codex_args = args
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
     }
     save_config(&config)
 }

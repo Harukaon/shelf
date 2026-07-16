@@ -2,6 +2,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { tauriInvoke } from "../helpers";
 import { t, setLang, getLang } from "../i18n";
 import type { AiSettings, AiModelListResponse } from "../types";
+import { formatCliArgs, parseCliArgs } from "./cli-launch";
 
 type AppTheme = "dark" | "light" | "github-light" | "solarized-light" | "dracula" | "monokai";
 
@@ -29,6 +30,17 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
           <option value="monokai">${t("settings.theme_monokai")}</option>
         </select>
       </div>
+      <div class="settings-section-title">${t("settings.cli_title")}</div>
+      <div class="settings-note">${t("settings.cli_help")}</div>
+      <div class="settings-row stacked">
+        <label for="settings-claude-args">${t("settings.claude_args")}</label>
+        <input id="settings-claude-args" autocomplete="off" spellcheck="false" placeholder="${t("settings.claude_args_placeholder")}">
+      </div>
+      <div class="settings-row stacked">
+        <label for="settings-codex-args">${t("settings.codex_args")}</label>
+        <input id="settings-codex-args" autocomplete="off" spellcheck="false" placeholder="${t("settings.codex_args_placeholder")}">
+      </div>
+      <div class="settings-status" id="settings-cli-status"></div>
       <div class="settings-section-title">${t("settings.ai_title")}</div>
       <div class="settings-note">${t("settings.ai_help")}</div>
       <div class="settings-row stacked">
@@ -89,12 +101,21 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
   document.body.appendChild(backdrop);
   document.body.appendChild(panel);
 
+  const shellSel = panel.querySelector("#settings-shell") as HTMLSelectElement;
+  const currentShellOption = document.createElement("option");
+  currentShellOption.value = app.shellSetting;
+  currentShellOption.textContent = app.shellSetting;
+  shellSel.appendChild(currentShellOption);
+  (panel.querySelector("#settings-lang") as HTMLSelectElement).value = getLang();
+  (panel.querySelector("#settings-theme") as HTMLSelectElement).value = app.theme;
+  (panel.querySelector("#settings-claude-args") as HTMLInputElement).value = formatCliArgs(app.claudeArgs || []);
+  (panel.querySelector("#settings-codex-args") as HTMLInputElement).value = formatCliArgs(app.codexArgs || []);
+
   try {
     const [data, aiSettings] = await Promise.all([
       tauriInvoke<any>("detect_terminals"),
       tauriInvoke<AiSettings>("get_ai_settings"),
     ]);
-    const shellSel = panel.querySelector("#settings-shell") as HTMLSelectElement;
     shellSel.innerHTML = "";
     for (const s of data.shells || ["zsh"]) {
       const opt = document.createElement("option");
@@ -102,10 +123,6 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
       if (s === app.shellSetting) opt.selected = true;
       shellSel.appendChild(opt);
     }
-    const langSel = panel.querySelector("#settings-lang") as HTMLSelectElement;
-    langSel.value = getLang();
-    const themeSel = panel.querySelector("#settings-theme") as HTMLSelectElement;
-    themeSel.value = app.theme;
     (panel.querySelector("#settings-ai-endpoint") as HTMLSelectElement).value = aiSettings.endpoint || "openAi";
     (panel.querySelector("#settings-ai-base-url") as HTMLInputElement).value = aiSettings.baseUrl || "";
     (panel.querySelector("#settings-ai-api-key") as HTMLInputElement).value = aiSettings.apiKey || "";
@@ -132,12 +149,28 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
     .catch((e) => console.warn("get_log_dir failed:", e));
 
   panel.querySelector("#settings-save")!.addEventListener("click", async () => {
-    app.shellSetting = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;
+    const cliStatus = panel.querySelector("#settings-cli-status") as HTMLElement;
+    let claudeArgs: string[];
+    let codexArgs: string[];
+    try {
+      claudeArgs = parseCliArgs((panel.querySelector("#settings-claude-args") as HTMLInputElement).value);
+    } catch (_) {
+      cliStatus.className = "settings-status error";
+      cliStatus.textContent = t("settings.cli_args_invalid", "Claude");
+      return;
+    }
+    try {
+      codexArgs = parseCliArgs((panel.querySelector("#settings-codex-args") as HTMLInputElement).value);
+    } catch (_) {
+      cliStatus.className = "settings-status error";
+      cliStatus.textContent = t("settings.cli_args_invalid", "Codex");
+      return;
+    }
+
+    const newShell = (panel.querySelector("#settings-shell") as HTMLSelectElement).value;
     const newLang = (panel.querySelector("#settings-lang") as HTMLSelectElement).value;
     const selectedTheme = (panel.querySelector("#settings-theme") as HTMLSelectElement).value as AppTheme;
     const newTheme = appThemes.has(selectedTheme) ? selectedTheme : "dark";
-    setLang(newLang);
-    app._setTheme(newTheme);
     const aiSettings: AiSettings = {
       endpoint: ((panel.querySelector("#settings-ai-endpoint") as HTMLSelectElement).value === "claude") ? "claude" : "openAi",
       baseUrl: (panel.querySelector("#settings-ai-base-url") as HTMLInputElement).value.trim(),
@@ -146,12 +179,20 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
     };
     try {
       await Promise.all([
-        tauriInvoke("save_settings", { settings: { shell: app.shellSetting, language: newLang } }),
+        tauriInvoke("save_settings", { settings: { shell: newShell, language: newLang, claudeArgs, codexArgs } }),
         tauriInvoke("save_ai_settings", { settings: aiSettings }),
       ]);
     } catch (e) {
       console.error("save_settings failed:", e);
+      cliStatus.className = "settings-status error";
+      cliStatus.textContent = t("settings.save_failed", String(e));
+      return;
     }
+    app.shellSetting = newShell;
+    app.claudeArgs = claudeArgs;
+    app.codexArgs = codexArgs;
+    setLang(newLang);
+    app._setTheme(newTheme);
     close();
     app._updateStaticTexts();
     app._createStartTab();

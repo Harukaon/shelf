@@ -4,7 +4,8 @@ import { tauriInvoke } from "../helpers";
 import { t } from "../i18n";
 import { START_TAB_ID } from "./app-constants";
 import { createTerminalTab, scheduleTerminalRefit } from "./terminal";
-import { buildSshArgs, shQuote } from "./ssh";
+import { buildSshArgs } from "./ssh";
+import { buildLocalCliCommand, buildRemoteCliCommand } from "./cli-launch";
 import type { SessionProvider, SshTarget, TabInfo } from "../types";
 
 export type SavedWindowState = {
@@ -208,14 +209,12 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       .find((item: any) => item.id === saved.sessionId);
     if (!session) return null;
     const cwd = session.cwd || saved.cwd || saved.workspacePath;
-    const command = session.provider === "codex"
-      ? { bin: app.codexPath, args: ["resume", session.id, "-C", cwd] }
-      : { bin: app.claudePath, args: ["--resume", session.id] };
+    const extraArgs = session.provider === "codex" ? app.codexArgs : app.claudeArgs;
+    const bin = session.provider === "codex" ? app.codexPath : app.claudePath;
+    const command = buildLocalCliCommand(session.provider, bin, extraArgs, cwd, session.id);
     // If this was an SSH session, spawn via SSH
     if (saved.ssh) {
-      const remoteCmd = session.provider === "codex"
-        ? `codex resume ${shQuote(session.id)} -C ${shQuote(cwd)}`
-        : `claude --resume ${shQuote(session.id)}`;
+      const remoteCmd = buildRemoteCliCommand(session.provider, extraArgs, cwd, session.id);
       const sshArgs = buildSshArgs(saved.ssh, remoteCmd);
       const tab = createTerminalTab(saved.id, app._displayTitleForSession(session) || saved.title, app.terminalContainer,
         (id, data) => app._writePty(id, data),
@@ -234,11 +233,10 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
 
   if (saved.kind === "new-session") {
     if (!saved.sessionProvider || !saved.workspacePath) return null;
+    const extraArgs = saved.sessionProvider === "codex" ? app.codexArgs : app.claudeArgs;
     // If this was an SSH session, spawn via SSH
     if (saved.ssh) {
-      const remoteCmd = saved.sessionProvider === "codex"
-        ? `codex -C ${shQuote(saved.workspacePath)}`
-        : "claude";
+      const remoteCmd = buildRemoteCliCommand(saved.sessionProvider, extraArgs, saved.workspacePath);
       const sshArgs = buildSshArgs(saved.ssh, remoteCmd);
       const title = saved.title || t("ssh.new_shell");
       const tab = createTerminalTab(saved.id, title, app.terminalContainer,
@@ -248,9 +246,8 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       app._beginRestoredTabUnreadSuppression(tab.id);
       return tab;
     }
-    const command = saved.sessionProvider === "codex"
-      ? { bin: app.codexPath, args: ["-C", saved.workspacePath] }
-      : { bin: app.claudePath, args: [] };
+    const bin = saved.sessionProvider === "codex" ? app.codexPath : app.claudePath;
+    const command = buildLocalCliCommand(saved.sessionProvider, bin, extraArgs, saved.workspacePath);
     const title = saved.title || (saved.sessionProvider === "codex" ? t("tab.codex_new") : t("tab.claude_new"));
     const tab = createTerminalTab(saved.id, title, app.terminalContainer,
       (id, data) => app._writePty(id, data),
