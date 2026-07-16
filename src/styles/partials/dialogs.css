@@ -55,6 +55,35 @@
 }
 .settings-inline-actions button:hover { color: var(--text-primary); background: var(--bg-hover); }
 .settings-inline-actions button:disabled { opacity: 0.55; cursor: default; }
+.settings-cli-preview {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.settings-cli-preview-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+.settings-cli-preview-row > span {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.settings-cli-preview-row > code {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  user-select: text;
+}
+.settings-cli-preview-row > code.invalid { color: var(--red); }
 .settings-model-list {
   display: grid;
   gap: 4px;
@@ -493,4 +522,3 @@
   display: inline-block;
   animation: spin 0.8s linear infinite;
 }
-

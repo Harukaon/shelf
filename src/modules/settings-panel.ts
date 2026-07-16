@@ -2,7 +2,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { tauriInvoke } from "../helpers";
 import { t, setLang, getLang } from "../i18n";
 import type { AiSettings, AiModelListResponse } from "../types";
-import { formatCliArgs, parseCliArgs } from "./cli-launch";
+import { buildLocalCliCommand, formatCliArgs, formatCliCommand, parseCliArgs } from "./cli-launch";
 
 type AppTheme = "dark" | "light" | "github-light" | "solarized-light" | "dracula" | "monokai";
 
@@ -35,10 +35,30 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
       <div class="settings-row stacked">
         <label for="settings-claude-args">${t("settings.claude_args")}</label>
         <input id="settings-claude-args" autocomplete="off" spellcheck="false" placeholder="${t("settings.claude_args_placeholder")}">
+        <div class="settings-cli-preview">
+          <div class="settings-cli-preview-row">
+            <span>${t("settings.cli_preview_new")}</span>
+            <code id="settings-claude-preview-new"></code>
+          </div>
+          <div class="settings-cli-preview-row">
+            <span>${t("settings.cli_preview_resume")}</span>
+            <code id="settings-claude-preview-resume"></code>
+          </div>
+        </div>
       </div>
       <div class="settings-row stacked">
         <label for="settings-codex-args">${t("settings.codex_args")}</label>
         <input id="settings-codex-args" autocomplete="off" spellcheck="false" placeholder="${t("settings.codex_args_placeholder")}">
+        <div class="settings-cli-preview">
+          <div class="settings-cli-preview-row">
+            <span>${t("settings.cli_preview_new")}</span>
+            <code id="settings-codex-preview-new"></code>
+          </div>
+          <div class="settings-cli-preview-row">
+            <span>${t("settings.cli_preview_resume")}</span>
+            <code id="settings-codex-preview-resume"></code>
+          </div>
+        </div>
       </div>
       <div class="settings-status" id="settings-cli-status"></div>
       <div class="settings-section-title">${t("settings.ai_title")}</div>
@@ -110,6 +130,52 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
   (panel.querySelector("#settings-theme") as HTMLSelectElement).value = app.theme;
   (panel.querySelector("#settings-claude-args") as HTMLInputElement).value = formatCliArgs(app.claudeArgs || []);
   (panel.querySelector("#settings-codex-args") as HTMLInputElement).value = formatCliArgs(app.codexArgs || []);
+
+  const previewCwd = app.selectedWorkspace || "WORKSPACE_PATH";
+  const previewSessionId = "SESSION_ID";
+  const renderCommandPreview = (
+    provider: "claude" | "codex",
+    input: HTMLInputElement,
+    bin: string,
+    newOutput: HTMLElement,
+    resumeOutput: HTMLElement,
+  ) => {
+    try {
+      const extraArgs = parseCliArgs(input.value);
+      newOutput.textContent = formatCliCommand(
+        buildLocalCliCommand(provider, bin, extraArgs, previewCwd),
+      );
+      resumeOutput.textContent = formatCliCommand(
+        buildLocalCliCommand(provider, bin, extraArgs, previewCwd, previewSessionId),
+      );
+      newOutput.classList.remove("invalid");
+      resumeOutput.classList.remove("invalid");
+    } catch (_) {
+      newOutput.textContent = t("settings.cli_preview_invalid");
+      resumeOutput.textContent = t("settings.cli_preview_invalid");
+      newOutput.classList.add("invalid");
+      resumeOutput.classList.add("invalid");
+    }
+  };
+  const refreshCommandPreviews = () => {
+    renderCommandPreview(
+      "claude",
+      panel.querySelector("#settings-claude-args") as HTMLInputElement,
+      app.claudePath || "claude",
+      panel.querySelector("#settings-claude-preview-new") as HTMLElement,
+      panel.querySelector("#settings-claude-preview-resume") as HTMLElement,
+    );
+    renderCommandPreview(
+      "codex",
+      panel.querySelector("#settings-codex-args") as HTMLInputElement,
+      app.codexPath || "codex",
+      panel.querySelector("#settings-codex-preview-new") as HTMLElement,
+      panel.querySelector("#settings-codex-preview-resume") as HTMLElement,
+    );
+  };
+  panel.querySelector("#settings-claude-args")!.addEventListener("input", refreshCommandPreviews);
+  panel.querySelector("#settings-codex-args")!.addEventListener("input", refreshCommandPreviews);
+  refreshCommandPreviews();
 
   try {
     const [data, aiSettings] = await Promise.all([
