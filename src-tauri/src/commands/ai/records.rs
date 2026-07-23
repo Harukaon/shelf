@@ -55,6 +55,24 @@ pub(super) fn scan_codex_sessions(path: &str) -> Result<Vec<Session>, AiToolErro
     crate::commands::sessions::scan_codex_sessions_sync(&workspace.path).map_err(AiToolError::Failed)
 }
 
+pub(super) fn scan_pi_sessions(path: &str) -> Result<Vec<Session>, AiToolError> {
+    let workspace = load_config()
+        .workspaces
+        .into_iter()
+        .find(|workspace| {
+            workspace.provider == SessionProvider::Pi
+                && workspace.ssh.is_none()
+                && paths_equal(&workspace.path, path)
+        })
+        .ok_or_else(|| {
+            AiToolError::Failed(format!(
+                "Mounted local path '{}' for provider pi was not found in Shelf config",
+                path
+            ))
+        })?;
+    crate::commands::sessions::scan_pi_sessions_sync(&workspace.path).map_err(AiToolError::Failed)
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct SearchableSessionRecord {
     provider: SessionProvider,
@@ -100,13 +118,51 @@ pub(super) fn is_ai_session_record_path(path: &Path) -> bool {
     };
     let claude_records_dir = home_dir.join(".claude").join("projects");
     let codex_records_dir = home_dir.join(".codex").join("sessions");
-    path_is_under(path, &claude_records_dir) || path_is_under(path, &codex_records_dir)
+    let pi_records_dir = std::env::var("PI_CODING_AGENT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home_dir.join(".pi").join("agent"))
+        .join("sessions");
+    if path_is_under(path, &claude_records_dir)
+        || path_is_under(path, &codex_records_dir)
+        || path_is_under(path, &pi_records_dir)
+    {
+        return true;
+    }
+    load_config()
+        .workspaces
+        .into_iter()
+        .filter(|workspace| workspace.provider == SessionProvider::Pi && workspace.ssh.is_none())
+        .filter_map(|workspace| {
+            crate::commands::sessions::scan_pi_sessions_sync(&workspace.path).ok()
+        })
+        .flatten()
+        .any(|session| paths_equal(&session.file_path, &path.to_string_lossy()))
+}
+
+pub(super) fn is_pi_session_record_file(path: &Path) -> bool {
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        return value.get("type").and_then(Value::as_str) == Some("session")
+            && value.get("id").and_then(Value::as_str).is_some()
+            && value.get("cwd").and_then(Value::as_str).is_some()
+            && value.get("version").is_some();
+    }
+    false
 }
 
 pub(super) fn provider_label(provider: SessionProvider) -> &'static str {
     match provider {
-        SessionProvider::Claude => "Claude code",
-        SessionProvider::Codex => "codex",
+        SessionProvider::Claude => "Claude Code",
+        SessionProvider::Codex => "Codex",
+        SessionProvider::Pi => "pi",
     }
 }
 
@@ -114,6 +170,7 @@ pub(super) fn provider_key(provider: SessionProvider) -> &'static str {
     match provider {
         SessionProvider::Claude => "claude",
         SessionProvider::Codex => "codex",
+        SessionProvider::Pi => "pi",
     }
 }
 
@@ -160,12 +217,18 @@ pub(super) fn mounted_session(
     load_config()
         .workspaces
         .into_iter()
-        .filter(|workspace| workspace.provider == provider)
+        .filter(|workspace| {
+            workspace.provider == provider
+                && (provider != SessionProvider::Pi || workspace.ssh.is_none())
+        })
         .find_map(|workspace| {
             let sessions = match provider {
                 SessionProvider::Claude => crate::session::scan_sessions(&workspace.path),
                 SessionProvider::Codex => {
                     crate::commands::sessions::scan_codex_sessions_sync(&workspace.path)
+                }
+                SessionProvider::Pi => {
+                    crate::commands::sessions::scan_pi_sessions_sync(&workspace.path)
                 }
             };
             sessions
@@ -281,6 +344,28 @@ pub(super) fn configured_session_record_files(
                         &mut records,
                         SearchableSessionRecord {
                             provider: SessionProvider::Codex,
+                            id: session.id,
+                            file_path: PathBuf::from(session.file_path),
+                        },
+                    );
+                }
+            }
+            SessionProvider::Pi => {
+                if workspace.ssh.is_some() {
+                    continue;
+                }
+                let Ok(sessions) = crate::commands::sessions::scan_pi_sessions_sync(&workspace.path)
+                else {
+                    continue;
+                };
+                for session in sessions {
+                    if session.file_path.trim().is_empty() {
+                        continue;
+                    }
+                    insert_searchable_record(
+                        &mut records,
+                        SearchableSessionRecord {
+                            provider: SessionProvider::Pi,
                             id: session.id,
                             file_path: PathBuf::from(session.file_path),
                         },
@@ -418,6 +503,12 @@ pub(super) fn replace_session_record_lines(
     end_line: usize,
     replacement: &str,
 ) -> Result<Value, AiToolError> {
+    if provider == SessionProvider::Pi {
+        return Err(AiToolError::Failed(
+            "Editing pi session records is not supported because pi sessions are append-only trees"
+                .to_string(),
+        ));
+    }
     let file_path = mounted_session_file(provider, session_id)?;
     let original = fs::read_to_string(&file_path)
         .map_err(|e| AiToolError::Failed(format!("Read file '{}': {}", file_path.display(), e)))?;
@@ -486,6 +577,20 @@ mod tests {
     }
 
     #[test]
+    fn detects_pi_session_header_outside_known_record_dirs() {
+        let path = std::env::temp_dir().join(format!("shelf-pi-session-{}.jsonl", uuid::Uuid::new_v4()));
+        fs::write(
+            &path,
+            r#"{"type":"session","version":3,"id":"test","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp/project"}
+{"type":"message","id":"a","parentId":null,"timestamp":"2026-01-01T00:00:01Z","message":{"role":"user","content":"hello"}}
+"#,
+        )
+        .expect("fixture should be written");
+        assert!(is_pi_session_record_file(&path));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn ai_session_record_path_detects_known_record_dirs() {
         let Some(home_dir) = dirs::home_dir() else {
             return;
@@ -495,6 +600,9 @@ mod tests {
         ));
         assert!(is_ai_session_record_path(
             &home_dir.join(".codex/sessions/2026/01/01/rollout.jsonl")
+        ));
+        assert!(is_ai_session_record_path(
+            &home_dir.join(".pi/agent/sessions/--demo--/session.jsonl")
         ));
         assert!(!is_ai_session_record_path(
             &home_dir.join("Desktop/project/demo.jsonl")

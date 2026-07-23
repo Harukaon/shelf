@@ -1,4 +1,4 @@
-export type SessionProvider = "claude" | "codex";
+export type SessionProvider = "claude" | "codex" | "pi";
 
 export interface SshTarget {
   host: string;

@@ -200,6 +200,7 @@ where
             .tool(ListMountedPathsTool)
             .tool(ListClaudeSessionsTool)
             .tool(ListCodexSessionsTool)
+            .tool(ListPiSessionsTool)
             .tool(SearchSessionRecordsTool)
             .tool(ReadFileLinesTool)
             .tool(ReplaceFileLinesTool)

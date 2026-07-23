@@ -3,13 +3,14 @@ import { tauriInvoke } from "../helpers";
 import { t } from "../i18n";
 import { showToast } from "./toast";
 import { WorkspaceItem, Session, SessionProvider, SshTarget } from "../types";
+import { scanCommandForProvider } from "./cli-launch";
 
 export class WorkspaceManager {
   workspaces: WorkspaceItem[] = [];
   sessions = new Map<string, Session[]>();
   selectedWorkspace: string | null = null;
   selectedProvider: SessionProvider | null = null;
-  expandedProviders = new Set<SessionProvider>(["claude", "codex"]);
+  expandedProviders = new Set<SessionProvider>(["claude", "codex", "pi"]);
   expandedWorkspaces = new Set<string>();
   sessionPages = new Map<string, number>();
 
@@ -90,7 +91,7 @@ export class WorkspaceManager {
 
   async scanSessions(workspacePath: string, provider: SessionProvider, ssh?: SshTarget) {
     try {
-      const command = provider === "codex" ? "scan_codex_sessions" : "scan_sessions";
+      const command = scanCommandForProvider(provider);
       const sessions = await tauriInvoke<Session[]>(command, { workspacePath, ssh: ssh || null });
       this.sessions.set(this.workspaceKey(workspacePath, provider), sessions);
     } catch (e) {

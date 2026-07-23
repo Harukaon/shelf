@@ -1,6 +1,8 @@
 use crate::commands::ssh::ssh_exec;
 use crate::commands::workspace::{load_config, save_config};
-use crate::session::{sanitize_path, Session, SessionProvider, SshTarget};
+use crate::session::{
+    encode_pi_cwd, parse_pi_session_content, sanitize_path, Session, SessionProvider, SshTarget,
+};
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection};
 use std::fs;
@@ -58,6 +60,66 @@ pub fn scan_codex_sessions_sync(workspace_path: &str) -> Result<Vec<Session>, St
     let mut sessions = scan_codex_sessions_local(workspace_path)?;
     apply_session_title_overrides(&mut sessions);
     Ok(sessions)
+}
+
+#[tauri::command]
+pub async fn scan_pi_sessions(
+    workspace_path: String,
+    ssh: Option<SshTarget>,
+) -> Result<Vec<Session>, String> {
+    let session_dir_override = pi_session_dir_override();
+    if let Some(ssh_target) = ssh {
+        return tauri::async_runtime::spawn_blocking(move || {
+            let mut sessions = scan_pi_sessions_remote(
+                &workspace_path,
+                &ssh_target,
+                session_dir_override.as_deref(),
+            )?;
+            apply_session_title_overrides(&mut sessions);
+            Ok(sessions)
+        })
+        .await
+        .map_err(|e| format!("SSH pi scan failed: {}", e))?;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut sessions = crate::session::scan_pi_sessions(
+            &workspace_path,
+            session_dir_override.as_deref(),
+        )?;
+        apply_session_title_overrides(&mut sessions);
+        Ok(sessions)
+    })
+    .await
+    .map_err(|e| format!("pi scan failed: {}", e))?
+}
+
+/// Synchronous pi scan for internal use (AI tools, etc.) that doesn't use SSH.
+pub fn scan_pi_sessions_sync(workspace_path: &str) -> Result<Vec<Session>, String> {
+    let session_dir_override = pi_session_dir_override();
+    let mut sessions = crate::session::scan_pi_sessions(
+        workspace_path,
+        session_dir_override.as_deref(),
+    )?;
+    apply_session_title_overrides(&mut sessions);
+    Ok(sessions)
+}
+
+fn pi_session_dir_override() -> Option<String> {
+    parse_pi_session_dir_override(&load_config().pi_args)
+}
+
+fn parse_pi_session_dir_override(args: &[String]) -> Option<String> {
+    let mut session_dir = None;
+    for (index, arg) in args.iter().enumerate() {
+        if arg == "--session-dir" {
+            if let Some(value) = args.get(index + 1).map(|value| value.trim()) {
+                if !value.is_empty() {
+                    session_dir = Some(value.to_string());
+                }
+            }
+        }
+    }
+    session_dir
 }
 
 fn apply_session_title_overrides(sessions: &mut [Session]) {
@@ -233,6 +295,172 @@ fn parse_remote_session_file(content: &str, filename: &str, _ssh_target: &SshTar
         version,
         provider: SessionProvider::Claude,
     }))
+}
+
+fn scan_pi_sessions_remote(
+    workspace_path: &str,
+    ssh_target: &SshTarget,
+    session_dir_override: Option<&str>,
+) -> Result<Vec<Session>, String> {
+    let resolved_workspace = ssh_exec(
+        ssh_target,
+        &format!("{} && pwd -P", remote_cd_command(workspace_path)),
+    )?;
+    let session_dir = resolve_remote_pi_session_dir(
+        &resolved_workspace,
+        ssh_target,
+        session_dir_override,
+    )?;
+    let find_cmd = format!(
+        "find {} -maxdepth 1 -type f -name '*.jsonl' -print 2>/dev/null",
+        shell_quote(&session_dir)
+    );
+    let output = ssh_exec(ssh_target, &find_cmd)?;
+    if output.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut sessions = Vec::new();
+    for path in output.lines().map(str::trim).filter(|path| !path.is_empty()) {
+        let content = match ssh_exec(ssh_target, &format!("cat -- {}", shell_quote(path))) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        let Ok(Some(session)) = parse_pi_session_content(&content, path.to_string()) else {
+            continue;
+        };
+        if normalize_path(&session.cwd) == normalize_path(&resolved_workspace) {
+            sessions.push(session);
+        }
+    }
+
+    sessions.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| b.started_at.cmp(&a.started_at))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    Ok(sessions)
+}
+
+fn resolve_remote_pi_session_dir(
+    workspace_path: &str,
+    ssh_target: &SshTarget,
+    session_dir_override: Option<&str>,
+) -> Result<String, String> {
+    let environment = remote_pi_environment(ssh_target)?;
+    let agent_dir = resolve_remote_config_path(
+        environment.agent_dir.as_deref().unwrap_or("~/.pi/agent"),
+        workspace_path,
+        &environment.home,
+    );
+    let project_setting = read_remote_session_dir_setting(
+        ssh_target,
+        &format!("{}/.pi/settings.json", workspace_path.trim_end_matches('/')),
+    );
+    let global_setting = read_remote_session_dir_setting(
+        ssh_target,
+        &format!("{}/settings.json", agent_dir.trim_end_matches('/')),
+    );
+    let configured = session_dir_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or(environment.session_dir)
+        .or(project_setting)
+        .or(global_setting);
+    if let Some(session_dir) = configured {
+        return Ok(resolve_remote_config_path(
+            &session_dir,
+            workspace_path,
+            &environment.home,
+        ));
+    }
+
+    Ok(format!(
+        "{}/sessions/{}",
+        agent_dir.trim_end_matches('/'),
+        encode_pi_cwd(workspace_path.trim())
+    ))
+}
+
+struct RemotePiEnvironment {
+    session_dir: Option<String>,
+    agent_dir: Option<String>,
+    home: String,
+}
+
+fn remote_pi_environment(ssh_target: &SshTarget) -> Result<RemotePiEnvironment, String> {
+    let script = r#"printf 'SESSION=%s\nAGENT=%s\nHOME=%s\n' "${PI_CODING_AGENT_SESSION_DIR:-}" "${PI_CODING_AGENT_DIR:-}" "$HOME""#;
+    let output = ssh_exec(
+        ssh_target,
+        &format!("bash -lc {}", shell_quote(script)),
+    )?;
+    let mut session_dir = None;
+    let mut agent_dir = None;
+    let mut home = None;
+    for line in output.lines() {
+        if let Some(value) = line.strip_prefix("SESSION=") {
+            if !value.trim().is_empty() {
+                session_dir = Some(value.trim().to_string());
+            }
+        } else if let Some(value) = line.strip_prefix("AGENT=") {
+            if !value.trim().is_empty() {
+                agent_dir = Some(value.trim().to_string());
+            }
+        } else if let Some(value) = line.strip_prefix("HOME=") {
+            if !value.trim().is_empty() {
+                home = Some(value.trim().to_string());
+            }
+        }
+    }
+    Ok(RemotePiEnvironment {
+        session_dir,
+        agent_dir,
+        home: home.ok_or("Cannot resolve remote home directory")?,
+    })
+}
+
+fn read_remote_session_dir_setting(ssh_target: &SshTarget, path: &str) -> Option<String> {
+    let content = ssh_exec(
+        ssh_target,
+        &format!("cat -- {} 2>/dev/null", shell_quote(path)),
+    )
+    .ok()?;
+    serde_json::from_str::<serde_json::Value>(&content)
+        .ok()?
+        .get("sessionDir")?
+        .as_str()
+        .map(ToString::to_string)
+}
+
+fn resolve_remote_config_path(value: &str, workspace_path: &str, home: &str) -> String {
+    let value = value.trim();
+    if value == "~" {
+        return home.to_string();
+    }
+    if let Some(rest) = value.strip_prefix("~/") {
+        return format!("{}/{}", home.trim_end_matches('/'), rest);
+    }
+    if value.starts_with('/') {
+        return value.to_string();
+    }
+    format!("{}/{}", workspace_path.trim_end_matches('/'), value)
+}
+
+fn remote_cd_command(path: &str) -> String {
+    let path = path.trim();
+    if path.is_empty() || path == "~" {
+        "cd".to_string()
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        format!("cd && cd -- {}", shell_quote(rest))
+    } else {
+        format!("cd -- {}", shell_quote(path))
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
 }
 
 /// Column names present in the Codex `threads` table. Older Codex builds predate
@@ -561,15 +789,29 @@ pub fn delete_session(
     session_id: String,
     provider: Option<SessionProvider>,
     ssh: Option<SshTarget>,
+    workspace_path: Option<String>,
 ) -> Result<(), String> {
     if let Some(ssh_target) = ssh {
         let provider = provider.unwrap_or_default();
-        return delete_remote_session(&session_id, provider, &ssh_target);
+        return delete_remote_session(
+            &session_id,
+            provider,
+            &ssh_target,
+            workspace_path.as_deref(),
+        );
     }
-    if matches!(provider, Some(SessionProvider::Codex)) {
-        delete_codex_session(&session_id)?;
-        remove_session_title_override(&session_id);
-        return Ok(());
+    match provider {
+        Some(SessionProvider::Codex) => {
+            delete_codex_session(&session_id)?;
+            remove_session_title_override(&session_id);
+            return Ok(());
+        }
+        Some(SessionProvider::Pi) => {
+            delete_pi_session(&session_id, workspace_path.as_deref())?;
+            remove_session_title_override(&session_id);
+            return Ok(());
+        }
+        Some(SessionProvider::Claude) | None => {}
     }
 
     let projects_dir = dirs::home_dir()
@@ -603,36 +845,92 @@ pub fn delete_session(
     }
 }
 
-/// Session ids are uuids in both Claude and Codex, so this whitelist is enough
-/// to keep them safe to splice into a remote shell command.
+fn delete_pi_session(session_id: &str, workspace_path: Option<&str>) -> Result<(), String> {
+    let workspace_path = workspace_path.ok_or("Workspace path is required to delete a pi session")?;
+    let mounted = load_config().workspaces.into_iter().any(|workspace| {
+        workspace.provider == SessionProvider::Pi
+            && workspace.ssh.is_none()
+            && normalize_path(&workspace.path) == normalize_path(workspace_path)
+    });
+    if !mounted {
+        return Err("Mounted local pi workspace was not found".to_string());
+    }
+
+    let session_dir_override = pi_session_dir_override();
+    let sessions = crate::session::scan_pi_sessions(
+        workspace_path,
+        session_dir_override.as_deref(),
+    )?;
+    let session = sessions
+        .into_iter()
+        .find(|session| session.id == session_id)
+        .ok_or_else(|| format!("pi session file not found for id: {}", session_id))?;
+    let path = PathBuf::from(&session.file_path);
+    if !path.is_file() {
+        return Err(format!("pi session file not found: {}", path.display()));
+    }
+    trash::delete(&path).map_err(|e| format!("Trash error: {}", e))?;
+    Ok(())
+}
+
+/// Session ids are UUID-like identifiers in supported CLIs, so this whitelist
+/// keeps them safe to splice into a remote shell command.
 fn is_safe_session_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
         && id
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
 fn delete_remote_session(
     session_id: &str,
     provider: SessionProvider,
     ssh: &SshTarget,
+    workspace_path: Option<&str>,
 ) -> Result<(), String> {
     if !is_safe_session_id(session_id) {
         return Err("Invalid session id".to_string());
     }
 
     let (search_root, name_pattern) = match provider {
-        SessionProvider::Claude => ("$HOME/.claude/projects", format!("{}.jsonl", session_id)),
-        SessionProvider::Codex => ("$HOME/.codex/sessions", format!("rollout-*-{}.jsonl", session_id)),
+        SessionProvider::Claude => (
+            "\"$HOME\"/.claude/projects".to_string(),
+            format!("{}.jsonl", session_id),
+        ),
+        SessionProvider::Codex => (
+            "\"$HOME\"/.codex/sessions".to_string(),
+            format!("rollout-*-{}.jsonl", session_id),
+        ),
+        SessionProvider::Pi => {
+            let workspace_path = workspace_path
+                .ok_or("Workspace path is required to delete a remote pi session")?;
+            let resolved_workspace = ssh_exec(
+                ssh,
+                &format!("{} && pwd -P", remote_cd_command(workspace_path)),
+            )?;
+            let root = resolve_remote_pi_session_dir(
+                &resolved_workspace,
+                ssh,
+                pi_session_dir_override().as_deref(),
+            )?;
+            (shell_quote(&root), format!("*_{}.jsonl", session_id))
+        }
+    };
+    let max_depth = if provider == SessionProvider::Pi {
+        " -maxdepth 1"
+    } else {
+        ""
     };
 
-    // -print so we can detect a "no match" situation (find returns 0 even
-    // when nothing matched). The pattern is built from a uuid we validated
-    // above, so no shell-quoting is required.
+    // -print lets us detect a "no match" situation (find returns 0 even when
+    // nothing matched). The validated id is still shell-quoted as part of the
+    // provider-specific filename pattern.
     let cmd = format!(
-        "find {} -type f -name {} -print -delete",
-        search_root, name_pattern
+        "find {}{} -type f -name {} -print -delete",
+        search_root,
+        max_depth,
+        shell_quote(&name_pattern)
     );
     let output = ssh_exec(ssh, &cmd)?;
     if output.trim().is_empty() {
@@ -760,4 +1058,31 @@ fn next_available_archive_path(archive_dir: &Path, file_name: &Path) -> PathBuf 
         }
     }
     unreachable!("unbounded archive path search should always return")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pi_session_dir_override_uses_last_cli_value() {
+        let args = vec![
+            "--session-dir".to_string(),
+            "first".to_string(),
+            "--model".to_string(),
+            "test".to_string(),
+            "--session-dir".to_string(),
+            "second".to_string(),
+        ];
+        assert_eq!(
+            parse_pi_session_dir_override(&args).as_deref(),
+            Some("second")
+        );
+    }
+
+    #[test]
+    fn remote_session_id_validation_accepts_pi_dots() {
+        assert!(is_safe_session_id("release.1"));
+        assert!(!is_safe_session_id("../release.1"));
+    }
 }

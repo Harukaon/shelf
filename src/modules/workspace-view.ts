@@ -28,6 +28,7 @@ export function _renderWorkspaces(app: any) {
   app.workspaceList.appendChild(app._renderAiOrganizerGroup());
   app.workspaceList.appendChild(app._renderProviderGroup("claude", "Claude Code"));
   app.workspaceList.appendChild(app._renderProviderGroup("codex", "Codex"));
+  app.workspaceList.appendChild(app._renderProviderGroup("pi", "pi"));
   refreshIcons();
 }
 
@@ -230,6 +231,21 @@ export function _renderProviderGroup(app: any, provider: SessionProvider, title:
   return group;
 }
 
+function startWorkspaceSession(app: any, ws: WorkspaceItem): Promise<unknown> {
+  if (ws.ssh) {
+    switch (ws.provider) {
+      case "claude": return app._newSshClaudeSession(ws);
+      case "codex": return app._newSshCodexSession(ws);
+      case "pi": return app._newSshPiSession(ws);
+    }
+  }
+  switch (ws.provider) {
+    case "claude": return app._newClaudeSession(ws.path);
+    case "codex": return app._newCodexSession(ws.path);
+    case "pi": return app._newPiSession(ws.path);
+  }
+}
+
 export function _renderWorkspaceItem(app: any, ws: WorkspaceItem): HTMLElement {
   const wsDiv = document.createElement("div");
   wsDiv.className = "workspace-item provider-workspace-item";
@@ -254,17 +270,8 @@ export function _renderWorkspaceItem(app: any, ws: WorkspaceItem): HTMLElement {
     </span>`;
   header.querySelector(".ws-new-btn")!.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (ws.ssh) {
-      const task = ws.provider === "claude"
-        ? app._newSshClaudeSession(ws)
-        : app._newSshCodexSession(ws);
-      task.catch((error: unknown) => console.error("New SSH session failed:", error));
-    } else {
-      const task = ws.provider === "claude"
-        ? app._newClaudeSession(ws.path)
-        : app._newCodexSession(ws.path);
-      task.catch((error: unknown) => console.error("New session failed:", error));
-    }
+    startWorkspaceSession(app, ws)
+      .catch((error: unknown) => console.error("New session failed:", error));
   });
   const removeBtn = header.querySelector(".ws-remove-btn") as HTMLButtonElement;
   let deletePending = false;
@@ -367,7 +374,7 @@ export function _renderSessionItem(app: any, session: Session, wsPath: string, s
   const isActive = app.activeSessionIds.has(session.id);
   const isFocused = app.focusedSessionId === session.id;
   const item = document.createElement("div");
-  const badge = session.provider === "codex" ? "CX" : "CC";
+  const badge = session.provider === "claude" ? "CC" : session.provider === "codex" ? "CX" : "PI";
   const title = app._displayTitleForSession(session);
   item.className = `session-item${isActive ? " active" : ""}${isFocused ? " focused" : ""}`;
   item.innerHTML = `
@@ -560,6 +567,7 @@ export async function _promptAddSshWorkspace(app: any): Promise<void> {
         <select id="ssh-provider">
           <option value="claude">Claude Code</option>
           <option value="codex">Codex</option>
+          <option value="pi">pi</option>
         </select>
       </div>
       <div class="settings-row">

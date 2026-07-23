@@ -73,7 +73,7 @@ static AI_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
 const AI_ORGANIZER_PREAMBLE: &str = r#"
 You are Shelf's AI session organizer.
 
-Your job is to classify existing Claude Code and Codex conversations into a flat list of AI Organizer categories.
+Your job is to classify existing Claude Code, Codex, and pi conversations into a flat list of AI Organizer categories.
 Rules:
 - Use categories as one-level labels only. Do not create nested folders or workspace structures.
 - A mapping is only a reference to an original conversation: provider + sessionId + category metadata.

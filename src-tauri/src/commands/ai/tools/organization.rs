@@ -11,7 +11,7 @@ impl Tool for ListAiOrganizationTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "List Shelf's current AI organizer categories and session mappings. Mappings are lightweight references to original Claude/Codex sessions; they never copy or delete chat content.".to_string(),
+            description: "List Shelf's current AI organizer categories and session mappings. Mappings are lightweight references to original Claude/Codex/pi sessions; they never copy or delete chat content.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {},
@@ -142,7 +142,7 @@ impl Tool for DeleteAiCategoryTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Delete one AI organizer category and its mappings only. Original Claude/Codex conversations are never deleted.".to_string(),
+            description: "Delete one AI organizer category and its mappings only. Original Claude/Codex/pi conversations are never deleted.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -180,11 +180,11 @@ impl Tool for AddAiSessionMappingTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Add or move a lightweight mapping from an existing Claude/Codex conversation into one AI organizer category. This stores only provider + sessionId + category metadata; chat content stays in the original conversation.".to_string(),
+            description: "Add or move a lightweight mapping from an existing Claude/Codex/pi conversation into one AI organizer category. This stores only provider + sessionId + category metadata; chat content stays in the original conversation.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "provider": { "type": "string", "enum": ["claude", "codex"] },
+                    "provider": { "type": "string", "enum": ["claude", "codex", "pi"] },
                     "sessionId": { "type": "string" },
                     "categoryId": { "type": "string" },
                     "tags": { "type": "array", "items": { "type": "string" } },
@@ -240,11 +240,11 @@ impl Tool for RemoveAiSessionMappingTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Remove one AI organizer mapping only. Original Claude/Codex conversation records remain untouched.".to_string(),
+            description: "Remove one AI organizer mapping only. Original Claude/Codex/pi conversation records remain untouched.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "provider": { "type": "string", "enum": ["claude", "codex"] },
+                    "provider": { "type": "string", "enum": ["claude", "codex", "pi"] },
                     "sessionId": { "type": "string" }
                 },
                 "required": ["provider", "sessionId"]

@@ -16,7 +16,7 @@ import { showContextMenu } from "./modules/context-menu";
 import { openDialog } from "./modules/dialog";
 import { showToast } from "./modules/toast";
 import { buildSshArgs } from "./modules/ssh";
-import { buildRemoteCliCommand } from "./modules/cli-launch";
+import { buildRemoteCliCommand, scanCommandForProvider } from "./modules/cli-launch";
 import { scheduleUpdateCheck } from "./modules/update-check";
 import { APP_THEMES, SESSION_POLL_INTERVAL_MS, START_TAB_ID, THEME_STORAGE_KEY, type AppTheme } from "./modules/app-constants";
 import * as settingsPanel from "./modules/settings-panel";
@@ -48,8 +48,10 @@ class App {
   theme: AppTheme = "dark";
   claudePath = "claude";
   codexPath = "codex";
+  piPath = "pi";
   claudeArgs: string[] = [];
   codexArgs: string[] = [];
+  piArgs: string[] = [];
   pinnedIds = new Set<string>();
   sessionTitleOverrides = new Map<string, string>();
   pendingSessionTabs = new Map<string, PendingSessionTab>();
@@ -123,6 +125,7 @@ class App {
       showContextMenu([
         { label: "Claude Code", action: () => this.ws.promptAdd("claude") },
         { label: "Codex", action: () => this.ws.promptAdd("codex") },
+        { label: "pi", action: () => this.ws.promptAdd("pi") },
         { label: "SSH", action: () => this._promptAddSshWorkspace() },
       ], rect.left, rect.top);
       e.stopPropagation();
@@ -160,6 +163,7 @@ class App {
     this._updateStaticTexts();
     await this._loadClaudePath();
     await this._loadCodexPath();
+    await this._loadPiPath();
     this._createStartTab();
     await this.ws.load();
     this._setupCloseConfirm();
@@ -198,6 +202,37 @@ class App {
       const path = await tauriInvoke<string>("find_codex");
       if (path) { this.codexPath = path; console.log("[Shelf] codex found at:", path); }
     } catch (_) { console.warn("[Shelf] codex not found, using default"); }
+  }
+
+  private async _loadPiPath() {
+    try {
+      const path = await tauriInvoke<string>("find_pi");
+      if (path) { this.piPath = path; console.log("[Shelf] pi found at:", path); }
+    } catch (_) { console.warn("[Shelf] pi not found, using default"); }
+  }
+
+  private _cliArgsForProvider(provider: SessionProvider): string[] {
+    switch (provider) {
+      case "claude": return this.claudeArgs;
+      case "codex": return this.codexArgs;
+      case "pi": return this.piArgs;
+    }
+  }
+
+  private _cliPathForProvider(provider: SessionProvider): string {
+    switch (provider) {
+      case "claude": return this.claudePath;
+      case "codex": return this.codexPath;
+      case "pi": return this.piPath;
+    }
+  }
+
+  private _newSessionTitle(provider: SessionProvider): string {
+    switch (provider) {
+      case "claude": return t("tab.claude_new");
+      case "codex": return t("tab.codex_new");
+      case "pi": return t("tab.pi_new");
+    }
   }
 
   private async _loadAiSessionMap() {
@@ -274,11 +309,15 @@ class App {
       if (s?.pinned) { this.pinnedIds = new Set(s.pinned); }
       const claudeArgs = s?.claudeArgs || s?.claude_args;
       const codexArgs = s?.codexArgs || s?.codex_args;
+      const piArgs = s?.piArgs || s?.pi_args;
       if (Array.isArray(claudeArgs)) {
         this.claudeArgs = claudeArgs.filter((arg: unknown): arg is string => typeof arg === "string");
       }
       if (Array.isArray(codexArgs)) {
         this.codexArgs = codexArgs.filter((arg: unknown): arg is string => typeof arg === "string");
+      }
+      if (Array.isArray(piArgs)) {
+        this.piArgs = piArgs.filter((arg: unknown): arg is string => typeof arg === "string");
       }
       if (s?.session_titles || s?.sessionTitles) {
         const titles = s.session_titles || s.sessionTitles;
@@ -428,7 +467,7 @@ class App {
     const key = this.ws.workspaceKey(workspacePath, provider);
     const seq = (this.sessionScanSeq.get(key) || 0) + 1;
     this.sessionScanSeq.set(key, seq);
-    const command = provider === "codex" ? "scan_codex_sessions" : "scan_sessions";
+    const command = scanCommandForProvider(provider);
     let scanError: unknown = null;
     const sessions = await tauriInvoke<Session[]>(command, { workspacePath, ssh: ssh || null }).catch((e) => {
       console.error(`Scan ${provider} sessions:`, e);
@@ -519,7 +558,7 @@ class App {
 
   private _findSessionByKey(sessionKey: string): { session: Session; workspacePath: string } | null {
     const [provider, sessionId] = sessionKey.split(":", 2) as [SessionProvider | undefined, string | undefined];
-    if ((provider !== "claude" && provider !== "codex") || !sessionId) return null;
+    if ((provider !== "claude" && provider !== "codex" && provider !== "pi") || !sessionId) return null;
 
     for (const [workspaceKey, sessions] of this.ws.sessions) {
       if (!workspaceKey.startsWith(`${provider}:`)) continue;
@@ -651,6 +690,8 @@ class App {
 
   private async _newCodexSession(wsPath: string) { return sessionActions._newCodexSession(this, wsPath); }
 
+  private async _newPiSession(wsPath: string) { return sessionActions._newPiSession(this, wsPath); }
+
   private async _sessionBaselineIds(wsPath: string, provider: SessionProvider): Promise<Set<string>> { return sessionActions._sessionBaselineIds(this, wsPath, provider); }
 
   private _schedulePendingSessionPoll(tabId: string) { return sessionActions._schedulePendingSessionPoll(this, tabId); }
@@ -753,28 +794,28 @@ class App {
 
   private _promptAddSshWorkspace() { return workspaceView._promptAddSshWorkspace(this); }
 
-  private _newSshClaudeSession(ws: import("./types").WorkspaceItem) {
-    const tabId = crypto.randomUUID();
-    const ssh = ws.ssh!;
-    const sshArgs = buildSshArgs(ssh, buildRemoteCliCommand("claude", this.claudeArgs, ws.path));
-    const tab = createTerminalTab(tabId, t("tab.claude_new"), this.terminalContainer,
-      (id, data) => this._writePty(id, data),
-      { cwd: ws.path, workspacePath: ws.path, sessionProvider: "claude", command: { bin: "ssh", args: sshArgs }, ssh, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },
-    );
-    tab.sessionProvider = "claude";
-    this.tabs.addTab(tab);
-    this._scheduleSaveAppState();
+  private async _newSshClaudeSession(ws: import("./types").WorkspaceItem) {
+    return this._newSshSession(ws);
   }
 
-  private _newSshCodexSession(ws: import("./types").WorkspaceItem) {
+  private async _newSshCodexSession(ws: import("./types").WorkspaceItem) {
+    return this._newSshSession(ws);
+  }
+
+  private async _newSshPiSession(ws: import("./types").WorkspaceItem) {
+    return this._newSshSession(ws);
+  }
+
+  private async _newSshSession(ws: import("./types").WorkspaceItem) {
     const tabId = crypto.randomUUID();
     const ssh = ws.ssh!;
-    const sshArgs = buildSshArgs(ssh, buildRemoteCliCommand("codex", this.codexArgs, ws.path));
-    const tab = createTerminalTab(tabId, t("tab.codex_new"), this.terminalContainer,
+    const extraArgs = this._cliArgsForProvider(ws.provider);
+    const sshArgs = buildSshArgs(ssh, buildRemoteCliCommand(ws.provider, extraArgs, ws.path));
+    const tab = createTerminalTab(tabId, this._newSessionTitle(ws.provider), this.terminalContainer,
       (id, data) => this._writePty(id, data),
-      { cwd: ws.path, workspacePath: ws.path, sessionProvider: "codex", command: { bin: "ssh", args: sshArgs }, ssh, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },
+      { cwd: ws.path, workspacePath: ws.path, sessionProvider: ws.provider, command: { bin: "ssh", args: sshArgs }, ssh, onUnreadChange: (id, v) => this._onUnreadChange(id, v) },
     );
-    tab.sessionProvider = "codex";
+    tab.sessionProvider = ws.provider;
     this.tabs.addTab(tab);
     this._scheduleSaveAppState();
   }

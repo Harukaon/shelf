@@ -94,14 +94,41 @@ export function buildCliArgs(
   cwd: string,
   sessionId?: string,
 ): string[] {
-  const managedArgs = provider === "codex"
-    ? sessionId
-      ? ["resume", sessionId, "-C", cwd]
-      : ["-C", cwd]
-    : sessionId
-      ? ["--resume", sessionId]
-      : [];
+  let managedArgs: string[];
+  switch (provider) {
+    case "claude":
+      managedArgs = sessionId ? ["--resume", sessionId] : [];
+      break;
+    case "codex":
+      managedArgs = sessionId
+        ? ["resume", sessionId, "-C", cwd]
+        : ["-C", cwd];
+      break;
+    case "pi":
+      managedArgs = sessionId ? ["--session", sessionId] : [];
+      break;
+    default:
+      return assertNever(provider);
+  }
   return [...extraArgs, ...managedArgs];
+}
+
+export function defaultCliBin(provider: SessionProvider): string {
+  switch (provider) {
+    case "claude": return "claude";
+    case "codex": return "codex";
+    case "pi": return "pi";
+    default: return assertNever(provider);
+  }
+}
+
+export function scanCommandForProvider(provider: SessionProvider): string {
+  switch (provider) {
+    case "claude": return "scan_sessions";
+    case "codex": return "scan_codex_sessions";
+    case "pi": return "scan_pi_sessions";
+    default: return assertNever(provider);
+  }
 }
 
 export function buildLocalCliCommand(
@@ -120,8 +147,20 @@ export function buildRemoteCliCommand(
   cwd: string,
   sessionId?: string,
 ): string {
-  const bin = provider === "codex" ? "codex" : "claude";
-  return [bin, ...buildCliArgs(provider, extraArgs, cwd, sessionId)]
+  const command = [defaultCliBin(provider), ...buildCliArgs(provider, extraArgs, cwd, sessionId)]
     .map(shQuote)
     .join(" ");
+  if (provider !== "pi") return command;
+  return `${remoteCdCommand(cwd)} && ${command}`;
+}
+
+function remoteCdCommand(cwd: string): string {
+  const path = cwd.trim();
+  if (!path || path === "~") return "cd";
+  if (path.startsWith("~/")) return `cd && cd -- ${shQuote(path.slice(2))}`;
+  return `cd -- ${shQuote(path)}`;
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unsupported session provider: ${String(value)}`);
 }

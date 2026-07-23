@@ -1,12 +1,12 @@
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { spawn, IPty, IPtyForkOptions } from "./pty";
-import { TabInfo, SshTarget } from "../types";
+import { TabInfo, SshTarget, type SessionProvider } from "../types";
 import { t } from "../i18n";
 
 type TerminalTabOptions = {
   sessionId?: string;
-  sessionProvider?: "claude" | "codex";
+  sessionProvider?: SessionProvider;
   cwd?: string;
   workspacePath?: string;
   shell?: string;
@@ -65,8 +65,10 @@ function shouldFallbackCommand(output: string, exitCode?: number): boolean {
     normalized.includes("node: command not found") ||
     normalized.includes("codex: command not found") ||
     normalized.includes("claude: command not found") ||
+    normalized.includes("pi: command not found") ||
     normalized.includes("command not found: codex") ||
     normalized.includes("command not found: claude") ||
+    normalized.includes("command not found: pi") ||
     normalized.includes("bad interpreter")
   );
 }
@@ -608,7 +610,8 @@ export function createTerminalTab(
   // on every byte. Claude Code emits OSC 9 (preferredNotifChannel=iterm2),
   // OSC 777 (Ghostty/Kitty default), or BEL (preferredNotifChannel=terminal_bell).
   // Codex CLI emits OSC 9 or BEL via tui.notification_method, on
-  // agent-turn-complete / approval-requested / plan-mode-prompt. Plain zsh
+  // agent-turn-complete / approval-requested / plan-mode-prompt. pi and other
+  // terminal agents may also use BEL/OSC notifications. Plain zsh
   // BELs on completion errors and the `notify` option — also a legitimate
   // attention trigger.
   const markUnreadIfBackground = () => {

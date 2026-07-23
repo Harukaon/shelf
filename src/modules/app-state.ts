@@ -209,8 +209,8 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       .find((item: any) => item.id === saved.sessionId);
     if (!session) return null;
     const cwd = session.cwd || saved.cwd || saved.workspacePath;
-    const extraArgs = session.provider === "codex" ? app.codexArgs : app.claudeArgs;
-    const bin = session.provider === "codex" ? app.codexPath : app.claudePath;
+    const extraArgs = app._cliArgsForProvider(session.provider);
+    const bin = app._cliPathForProvider(session.provider);
     const command = buildLocalCliCommand(session.provider, bin, extraArgs, cwd, session.id);
     // If this was an SSH session, spawn via SSH
     if (saved.ssh) {
@@ -233,7 +233,7 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
 
   if (saved.kind === "new-session") {
     if (!saved.sessionProvider || !saved.workspacePath) return null;
-    const extraArgs = saved.sessionProvider === "codex" ? app.codexArgs : app.claudeArgs;
+    const extraArgs = app._cliArgsForProvider(saved.sessionProvider);
     // If this was an SSH session, spawn via SSH
     if (saved.ssh) {
       const remoteCmd = buildRemoteCliCommand(saved.sessionProvider, extraArgs, saved.workspacePath);
@@ -246,9 +246,9 @@ export function _createRestoredTab(app: any, saved: SavedTabState): TabInfo | nu
       app._beginRestoredTabUnreadSuppression(tab.id);
       return tab;
     }
-    const bin = saved.sessionProvider === "codex" ? app.codexPath : app.claudePath;
+    const bin = app._cliPathForProvider(saved.sessionProvider);
     const command = buildLocalCliCommand(saved.sessionProvider, bin, extraArgs, saved.workspacePath);
-    const title = saved.title || (saved.sessionProvider === "codex" ? t("tab.codex_new") : t("tab.claude_new"));
+    const title = saved.title || app._newSessionTitle(saved.sessionProvider);
     const tab = createTerminalTab(saved.id, title, app.terminalContainer,
       (id, data) => app._writePty(id, data),
       { cwd: saved.workspacePath, workspacePath: saved.workspacePath, sessionProvider: saved.sessionProvider, command, ...unreadOptions },

@@ -105,6 +105,39 @@ impl Tool for ListCodexSessionsTool {
 }
 
 #[derive(Clone, Copy)]
+pub(crate) struct ListPiSessionsTool;
+
+impl Tool for ListPiSessionsTool {
+    const NAME: &'static str = "list_pi_sessions";
+    type Error = AiToolError;
+    type Args = MountedPathArgs;
+    type Output = Value;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "List pi session records for a mounted local Shelf directory path. Use list_mounted_paths first to discover valid paths. Large outputs are truncated.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "A local directory path currently mounted for pi in Shelf's left sidebar." }
+                },
+                "required": ["path"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let sessions = scan_pi_sessions(&args.path)?;
+        Ok(limited_json_output(json!({
+            "path": absolute_path_string(&args.path),
+            "provider": "pi",
+            "sessions": sessions.into_iter().map(session_to_tool_value).collect::<Vec<_>>(),
+        })))
+    }
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct SearchSessionRecordsTool;
 
 impl Tool for SearchSessionRecordsTool {
@@ -116,7 +149,7 @@ impl Tool for SearchSessionRecordsTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Search local Claude Code and Codex session files under Shelf-mounted directories. If path is omitted, searches every mounted directory. If path is provided, it must be a directory currently mounted in Shelf's left sidebar. Returns provider, session id, absolute filePath, line number, matched line, and --- separators. Output is truncated at a fixed limit; narrow the query or use read_file_lines with filePath and line numbers for details.".to_string(),
+            description: "Search local Claude Code, Codex, and pi session files under Shelf-mounted directories. If path is omitted, searches every mounted directory. If path is provided, it must be a directory currently mounted in Shelf's left sidebar. Returns provider, session id, absolute filePath, line number, matched line, and --- separators. Output is truncated at a fixed limit; narrow the query or use read_file_lines with filePath and line numbers for details.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -223,7 +256,8 @@ impl Tool for ReplaceFileLinesTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        if is_ai_session_record_path(Path::new(&args.file_path)) {
+        let file_path = Path::new(&args.file_path);
+        if is_ai_session_record_path(file_path) || is_pi_session_record_file(file_path) {
             return Err(AiToolError::Failed(
                 "Use replace_session_record_lines with provider + sessionId to edit session records"
                     .to_string(),
@@ -270,11 +304,11 @@ impl Tool for ReadSessionRecordLinesTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Read a mounted Claude/Codex session record by provider + sessionId and 1-based inclusive line range. This only reads sessions currently reachable from Shelf-mounted workspaces.".to_string(),
+            description: "Read a mounted Claude/Codex/pi session record by provider + sessionId and 1-based inclusive line range. This only reads local sessions currently reachable from Shelf-mounted workspaces.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "provider": { "type": "string", "enum": ["claude", "codex"] },
+                    "provider": { "type": "string", "enum": ["claude", "codex", "pi"] },
                     "sessionId": { "type": "string" },
                     "startLine": { "type": "integer", "minimum": 1 },
                     "endLine": { "type": "integer", "minimum": 1 }
@@ -322,11 +356,11 @@ impl Tool for ReplaceSessionRecordLinesTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Replace a mounted Claude/Codex session record's 1-based inclusive line range by provider + sessionId. This directly edits the original conversation record, only for sessions currently reachable from Shelf-mounted workspaces. Replacement is rejected if it would make the JSONL record invalid.".to_string(),
+            description: "Replace a mounted Claude/Codex session record's 1-based inclusive line range by provider + sessionId. pi records are read-only. This directly edits the original conversation record, only for sessions currently reachable from Shelf-mounted workspaces. Replacement is rejected if it would make the JSONL record invalid.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "provider": { "type": "string", "enum": ["claude", "codex"] },
+                    "provider": { "type": "string", "enum": ["claude", "codex", "pi"] },
                     "sessionId": { "type": "string" },
                     "startLine": { "type": "integer", "minimum": 1 },
                     "endLine": { "type": "integer", "minimum": 1 },

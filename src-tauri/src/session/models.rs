@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 pub enum SessionProvider {
     Claude,
     Codex,
+    Pi,
 }
 
 impl Default for SessionProvider {
@@ -82,6 +83,8 @@ pub struct ShelfConfig {
     pub claude_args: Vec<String>,
     #[serde(default)]
     pub codex_args: Vec<String>,
+    #[serde(default)]
+    pub pi_args: Vec<String>,
 }
 
 impl Default for ShelfConfig {
@@ -94,6 +97,7 @@ impl Default for ShelfConfig {
             session_titles: BTreeMap::new(),
             claude_args: Vec::new(),
             codex_args: Vec::new(),
+            pi_args: Vec::new(),
         }
     }
 }
@@ -133,6 +137,7 @@ mod tests {
 
         assert!(config.claude_args.is_empty());
         assert!(config.codex_args.is_empty());
+        assert!(config.pi_args.is_empty());
     }
 
     #[test]
@@ -144,11 +149,16 @@ mod tests {
             "/Users/username/My Settings/claude.json".to_string(),
         ];
         config.codex_args = vec!["--profile".to_string(), "work".to_string()];
+        config.pi_args = vec![
+            "--model".to_string(),
+            "anthropic/claude-sonnet-4".to_string(),
+        ];
 
         let encoded = serde_json::to_string(&config).expect("config should serialize");
         let decoded: ShelfConfig = serde_json::from_str(&encoded).expect("config should deserialize");
 
         assert_eq!(decoded.claude_args, config.claude_args);
         assert_eq!(decoded.codex_args, config.codex_args);
+        assert_eq!(decoded.pi_args, config.pi_args);
     }
 }

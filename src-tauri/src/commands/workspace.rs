@@ -65,7 +65,7 @@ pub fn add_workspace(path: String, provider: Option<SessionProvider>, ssh: Optio
     let mut config = load_config();
 
     // Uniqueness is by (path, provider, ssh-host?). Two workspaces pointing
-    // at the same remote path but with different providers (Claude vs Codex)
+    // at the same remote path but with different providers (Claude, Codex, or pi)
     // are intentionally allowed; same provider on the same SSH host + path
     // is a duplicate.
     let already_exists = if let Some(ref ssh_target) = ssh {
@@ -142,6 +142,7 @@ pub fn get_settings() -> Result<serde_json::Value, String> {
         "session_titles": config.session_titles,
         "claudeArgs": config.claude_args,
         "codexArgs": config.codex_args,
+        "piArgs": config.pi_args,
     }))
 }
 
@@ -175,6 +176,16 @@ pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
         .and_then(|value| value.as_array())
     {
         config.codex_args = args
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
+    }
+    if let Some(args) = payload
+        .get("piArgs")
+        .or_else(|| payload.get("pi_args"))
+        .and_then(|value| value.as_array())
+    {
+        config.pi_args = args
             .iter()
             .filter_map(|value| value.as_str().map(str::to_string))
             .collect();
@@ -302,7 +313,16 @@ pub fn find_claude() -> Result<String, String> {
 
 #[tauri::command]
 pub fn find_codex() -> Result<String, String> {
-    for path in codex_candidates() {
+    find_cli("codex", codex_candidates())
+}
+
+#[tauri::command]
+pub fn find_pi() -> Result<String, String> {
+    find_cli("pi", pi_candidates())
+}
+
+fn find_cli(command_name: &str, candidates: Vec<PathBuf>) -> Result<String, String> {
+    for path in candidates {
         if is_executable_file(&path) {
             return Ok(path.to_string_lossy().to_string());
         }
@@ -310,7 +330,7 @@ pub fn find_codex() -> Result<String, String> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Some(path) = find_command_on_windows("codex") {
+        if let Some(path) = find_command_on_windows(command_name) {
             return Ok(path);
         }
     }
@@ -318,24 +338,27 @@ pub fn find_codex() -> Result<String, String> {
     #[cfg(not(target_os = "windows"))]
     {
         for shell in ["/bin/zsh", "/bin/bash", "/bin/sh"] {
-            if let Some(path) = find_command_with_shell(shell, "codex") {
+            if let Some(path) = find_command_with_shell(shell, command_name) {
                 return Ok(path);
             }
         }
     }
 
-    Err("codex not found".to_string())
+    Err(format!("{} not found", command_name))
 }
 
 fn codex_candidates() -> Vec<PathBuf> {
     cli_candidates("codex")
+}
+fn pi_candidates() -> Vec<PathBuf> {
+    cli_candidates("pi")
 }
 fn claude_candidates() -> Vec<PathBuf> {
     cli_candidates("claude")
 }
 
 /// Build the list of common install locations to probe for a Node-based CLI
-/// (`claude`, `codex`). The list mirrors how popular package managers / Node
+/// (`claude`, `codex`, `pi`). The list mirrors how popular package managers / Node
 /// version managers lay out global binaries on each platform; missing entries
 /// fall through to `find_command_on_windows` (Windows) or
 /// `find_command_with_shell` (Unix) which walks the live PATH.

@@ -153,6 +153,7 @@
 }
 .provider-badge.claude { color: var(--yellow); }
 .provider-badge.codex { color: var(--accent-dim); }
+.provider-badge.pi { color: var(--cyan); }
 
 .pinned-section {
   border-bottom: 1px solid var(--border);

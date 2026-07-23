@@ -1,7 +1,7 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { tauriInvoke } from "../helpers";
 import { t, setLang, getLang } from "../i18n";
-import type { AiSettings, AiModelListResponse } from "../types";
+import type { AiSettings, AiModelListResponse, SessionProvider } from "../types";
 import { buildLocalCliCommand, formatCliArgs, formatCliCommand, parseCliArgs } from "./cli-launch";
 
 type AppTheme = "dark" | "light" | "github-light" | "solarized-light" | "dracula" | "monokai";
@@ -57,6 +57,20 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
           <div class="settings-cli-preview-row">
             <span>${t("settings.cli_preview_resume")}</span>
             <code id="settings-codex-preview-resume"></code>
+          </div>
+        </div>
+      </div>
+      <div class="settings-row stacked">
+        <label for="settings-pi-args">${t("settings.pi_args")}</label>
+        <input id="settings-pi-args" autocomplete="off" spellcheck="false" placeholder="${t("settings.pi_args_placeholder")}">
+        <div class="settings-cli-preview">
+          <div class="settings-cli-preview-row">
+            <span>${t("settings.cli_preview_new")}</span>
+            <code id="settings-pi-preview-new"></code>
+          </div>
+          <div class="settings-cli-preview-row">
+            <span>${t("settings.cli_preview_resume")}</span>
+            <code id="settings-pi-preview-resume"></code>
           </div>
         </div>
       </div>
@@ -130,11 +144,12 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
   (panel.querySelector("#settings-theme") as HTMLSelectElement).value = app.theme;
   (panel.querySelector("#settings-claude-args") as HTMLInputElement).value = formatCliArgs(app.claudeArgs || []);
   (panel.querySelector("#settings-codex-args") as HTMLInputElement).value = formatCliArgs(app.codexArgs || []);
+  (panel.querySelector("#settings-pi-args") as HTMLInputElement).value = formatCliArgs(app.piArgs || []);
 
   const previewCwd = app.selectedWorkspace || "WORKSPACE_PATH";
   const previewSessionId = "SESSION_ID";
   const renderCommandPreview = (
-    provider: "claude" | "codex",
+    provider: SessionProvider,
     input: HTMLInputElement,
     bin: string,
     newOutput: HTMLElement,
@@ -172,9 +187,17 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
       panel.querySelector("#settings-codex-preview-new") as HTMLElement,
       panel.querySelector("#settings-codex-preview-resume") as HTMLElement,
     );
+    renderCommandPreview(
+      "pi",
+      panel.querySelector("#settings-pi-args") as HTMLInputElement,
+      app.piPath || "pi",
+      panel.querySelector("#settings-pi-preview-new") as HTMLElement,
+      panel.querySelector("#settings-pi-preview-resume") as HTMLElement,
+    );
   };
   panel.querySelector("#settings-claude-args")!.addEventListener("input", refreshCommandPreviews);
   panel.querySelector("#settings-codex-args")!.addEventListener("input", refreshCommandPreviews);
+  panel.querySelector("#settings-pi-args")!.addEventListener("input", refreshCommandPreviews);
   refreshCommandPreviews();
 
   try {
@@ -218,6 +241,7 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
     const cliStatus = panel.querySelector("#settings-cli-status") as HTMLElement;
     let claudeArgs: string[];
     let codexArgs: string[];
+    let piArgs: string[];
     try {
       claudeArgs = parseCliArgs((panel.querySelector("#settings-claude-args") as HTMLInputElement).value);
     } catch (_) {
@@ -230,6 +254,13 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
     } catch (_) {
       cliStatus.className = "settings-status error";
       cliStatus.textContent = t("settings.cli_args_invalid", "Codex");
+      return;
+    }
+    try {
+      piArgs = parseCliArgs((panel.querySelector("#settings-pi-args") as HTMLInputElement).value);
+    } catch (_) {
+      cliStatus.className = "settings-status error";
+      cliStatus.textContent = t("settings.cli_args_invalid", "pi");
       return;
     }
 
@@ -245,7 +276,7 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
     };
     try {
       await Promise.all([
-        tauriInvoke("save_settings", { settings: { shell: newShell, language: newLang, claudeArgs, codexArgs } }),
+        tauriInvoke("save_settings", { settings: { shell: newShell, language: newLang, claudeArgs, codexArgs, piArgs } }),
         tauriInvoke("save_ai_settings", { settings: aiSettings }),
       ]);
     } catch (e) {
@@ -257,6 +288,7 @@ export async function _showSettings(app: any, appThemes: Set<AppTheme>) {
     app.shellSetting = newShell;
     app.claudeArgs = claudeArgs;
     app.codexArgs = codexArgs;
+    app.piArgs = piArgs;
     setLang(newLang);
     app._setTheme(newTheme);
     close();
